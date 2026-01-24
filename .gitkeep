@@ -1,0 +1,4 @@
+New-Item Frontend\.gitkeep -ItemType File
+New-Item Backend\.gitkeep -ItemType File
+New-Item Data_Storage\.gitkeep -ItemType File
+New-Item API\.gitkeep -ItemType File

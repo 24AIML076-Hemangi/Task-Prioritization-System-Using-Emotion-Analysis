@@ -56,13 +56,13 @@ function showError(message) {
     errorMessage.classList.add('show');
 }
 
-// Add click handlers for demo links
+// Add click handlers for navigation links
 document.querySelector('.forgot-password').addEventListener('click', function(e) {
     e.preventDefault();
-    alert('Password reset feature coming soon');
+    window.location.href = 'forgot-password.html';
 });
 
 document.querySelector('.signup').addEventListener('click', function(e) {
     e.preventDefault();
-    alert('Sign up feature coming soon');
+    window.location.href = 'signup.html';
 });

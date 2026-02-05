@@ -9,6 +9,10 @@ class TaskDashboard {
         this.currentEmotion = null;
         this.currentConfidence = null;
         this.cameraStream = null;
+        this.currentBoard = 'All';
+        this.selectedDate = null; // ISO date string 'YYYY-MM-DD'
+        this.calendarMonth = null; // numeric month (0-11)
+        this.calendarYear = null;
         this.userId = null;
         this.apiUrl = 'http://localhost:5000/api/tasks';
 
@@ -44,6 +48,8 @@ class TaskDashboard {
             
             if (response.ok) {
                 this.tasks = await response.json();
+                // ensure tasks have a board property (default to All)
+                this.tasks = this.tasks.map(t => ({ ...t, board: t.board || 'All' }));
                 console.log('Tasks loaded from API:', this.tasks.length, 'tasks');
             } else {
                 console.warn('Failed to load tasks from API, using defaults');
@@ -188,6 +194,8 @@ class TaskDashboard {
 
         const newTask = await this.createTaskInAPI(text.trim());
         if (newTask) {
+            // tag the created task with the currently selected board locally
+            newTask.board = this.currentBoard || 'All';
             this.tasks.unshift(newTask);
             this.renderTasks();
             document.getElementById('taskInput').value = '';
@@ -249,7 +257,21 @@ class TaskDashboard {
         const tasksCount = document.getElementById('tasksCount');
 
         // Get tasks ordered by Eisenhower matrix and emotion (only within groups)
-        const tasksToRender = this.getOrderedTasks();
+        let tasksToRender = this.getOrderedTasks();
+
+        // Filter by selected board
+        if (this.currentBoard && this.currentBoard !== 'All') {
+            tasksToRender = tasksToRender.filter(t => (t.board || 'All') === this.currentBoard);
+        }
+
+        // Filter by selected date
+        if (this.selectedDate) {
+            tasksToRender = tasksToRender.filter(t => {
+                const d = new Date(t.created_at || t.createdAt);
+                const iso = d.toISOString().slice(0,10);
+                return iso === this.selectedDate;
+            });
+        }
         const activeTasks = tasksToRender.filter((t) => !t.completed);
         tasksCount.textContent = activeTasks.length;
 
@@ -270,6 +292,72 @@ class TaskDashboard {
 
         // Update visibility of emotion scan button based on rules
         this.updateEmotionButtonVisibility();
+    }
+
+    /* ============================================
+       Boards & Calendar Helpers
+       ============================================ */
+
+    renderBoards() {
+        const bar = document.getElementById('boardsBar');
+        if (!bar) return;
+        bar.querySelectorAll('.board-pill').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.board === this.currentBoard);
+        });
+    }
+
+    generateMiniCalendar() {
+        const container = document.getElementById('miniCalendar');
+        if (!container) return;
+
+        const now = new Date();
+        if (this.calendarMonth === null) this.calendarMonth = now.getMonth();
+        if (this.calendarYear === null) this.calendarYear = now.getFullYear();
+
+        const month = this.calendarMonth;
+        const year = this.calendarYear;
+
+        const firstDay = new Date(year, month, 1);
+        const startDay = firstDay.getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+        let html = `<div class="cal-header">${firstDay.toLocaleString('default', { month: 'long' })} ${year}</div>`;
+        html += '<div class="cal-grid">';
+        const labels = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+        labels.forEach(l => html += `<div class="cal-label">${l}</div>`);
+
+        // blanks
+        for (let i = 0; i < startDay; i++) html += `<div class="cal-cell empty"></div>`;
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            const iso = new Date(year, month, d).toISOString().slice(0,10);
+            const classes = ['cal-cell','cal-day'];
+            if (this.selectedDate === iso) classes.push('selected');
+            html += `<button class="${classes.join(' ')}" data-date="${iso}">${d}</button>`;
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+
+        // attach click handlers
+        container.querySelectorAll('.cal-day').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const date = e.currentTarget.dataset.date;
+                if (this.selectedDate === date) {
+                    this.selectedDate = null; // toggle
+                } else {
+                    this.selectedDate = date;
+                }
+                document.getElementById('currentDateDisplay').textContent = this.selectedDate ? this.formatDateShort(this.selectedDate) : 'Today';
+                this.generateMiniCalendar();
+                this.renderTasks();
+            });
+        });
+    }
+
+    formatDateShort(iso) {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
 
     createTaskElement(task) {
@@ -709,6 +797,29 @@ class TaskDashboard {
             this.openCamera();
         });
 
+        // Boards bar handlers
+        document.querySelectorAll('.board-pill').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const board = e.currentTarget.dataset.board;
+                this.currentBoard = board || 'All';
+                this.renderBoards();
+                this.renderTasks();
+            });
+        });
+
+        // Calendar controls
+        const prev = document.getElementById('prevMonth');
+        const next = document.getElementById('nextMonth');
+        if (prev) prev.addEventListener('click', () => { this.calendarMonth--; if (this.calendarMonth < 0) { this.calendarMonth = 11; this.calendarYear--; } this.generateMiniCalendar(); });
+        if (next) next.addEventListener('click', () => { this.calendarMonth++; if (this.calendarMonth > 11) { this.calendarMonth = 0; this.calendarYear++; } this.generateMiniCalendar(); });
+
+        // Date nav toggle shows/hides sidebar (small screens)
+        const dateBtn = document.getElementById('dateNavBtn');
+        if (dateBtn) dateBtn.addEventListener('click', () => {
+            const sb = document.getElementById('sidebar');
+            if (sb) sb.classList.toggle('visible');
+        });
+
         // Camera modal controls
         document.getElementById('closeCamera').addEventListener('click', () => {
             this.closeCamera();
@@ -772,6 +883,10 @@ class TaskDashboard {
                 window.location.href = 'login.html';
             }
         });
+
+        // Initialize boards and calendar UI
+        this.renderBoards();
+        this.generateMiniCalendar();
     }
 
     cleanup() {

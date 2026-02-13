@@ -2,10 +2,23 @@
 Task management routes for the API
 """
 from flask import Blueprint, request, jsonify
+from datetime import datetime
 from database import db
 from models import Task, EmotionLog
+from modules.emotion import detect_emotion_from_image, get_emotion_icon
+from notifications import send_email, send_sms
 
 task_bp = Blueprint('tasks', __name__, url_prefix='/api/tasks')
+
+
+def parse_datetime(value):
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return dt.replace(tzinfo=None)
+    except Exception:
+        return None
 
 # ============ GET ALL TASKS ============
 @task_bp.route('', methods=['GET'])
@@ -36,8 +49,14 @@ def create_task():
         title=data['title'],
         importance=data.get('importance', 'not-important'),
         urgency=data.get('urgency', 'not-urgent'),
-        emotion_applied=data.get('emotion_applied')
+        emotion_applied=data.get('emotion_applied'),
+        due_at=parse_datetime(data.get('due_at')),
+        reminder_at=parse_datetime(data.get('reminder_at')),
+        reminder_method=data.get('reminder_method'),
+        reminder_phone=data.get('reminder_phone')
     )
+    if new_task.reminder_at:
+        new_task.reminder_sent = False
     
     db.session.add(new_task)
     db.session.commit()
@@ -68,6 +87,15 @@ def update_task(task_id):
         task.completed = data['completed']
     if 'emotion_applied' in data:
         task.emotion_applied = data['emotion_applied']
+    if 'due_at' in data:
+        task.due_at = parse_datetime(data.get('due_at'))
+    if 'reminder_at' in data:
+        task.reminder_at = parse_datetime(data.get('reminder_at'))
+        task.reminder_sent = False if task.reminder_at else task.reminder_sent
+    if 'reminder_method' in data:
+        task.reminder_method = data.get('reminder_method')
+    if 'reminder_phone' in data:
+        task.reminder_phone = data.get('reminder_phone')
     
     db.session.commit()
     
@@ -128,3 +156,75 @@ def log_emotion():
     
     print(f"✓ Emotion logged: {data['emotion']} ({data.get('confidence', 0.0)}) for {data['user_id']}")
     return jsonify(emotion_log.to_dict()), 201
+
+
+# ============ EMOTION SCAN ============
+@task_bp.route('/emotion-scan', methods=['POST'])
+def emotion_scan():
+    """Analyze emotion from image and return emotion type with confidence"""
+    data = request.get_json() or {}
+    
+    image_base64 = data.get('image')
+    user_id = data.get('user_id')
+    
+    if not image_base64 or not user_id:
+        return jsonify({'error': 'image and user_id are required'}), 400
+    
+    # Detect emotion from image
+    emotion_result = detect_emotion_from_image(image_base64)
+    
+    # Log emotion to database
+    emotion_log = EmotionLog(
+        user_id=user_id,
+        emotion=emotion_result['emotion'],
+        confidence=emotion_result['confidence']
+    )
+    db.session.add(emotion_log)
+    db.session.commit()
+    
+    print(f"✓ Emotion scan: {emotion_result['emotion']} ({emotion_result['confidence']}) for {user_id}")
+    
+    return jsonify(emotion_result), 200
+
+
+# ============ DISPATCH REMINDERS ============
+@task_bp.route('/reminders/dispatch', methods=['POST'])
+def dispatch_reminders():
+    """Send due reminders for a user (email/SMS)"""
+    data = request.get_json() or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    now = datetime.utcnow()
+    tasks = Task.query.filter_by(user_id=user_id).all()
+    due = [t for t in tasks if t.reminder_at and not t.reminder_sent and t.reminder_at <= now]
+
+    sent = 0
+    for task in due:
+        method = (task.reminder_method or 'email').lower()
+        subject = f"Task Reminder: {task.title}"
+        body = f"Reminder for task: {task.title}"
+
+        ok_email = True
+        ok_sms = True
+
+        if method in ['email', 'both']:
+            to_email = user_id if '@' in user_id else data.get('email')
+            if to_email:
+                ok_email = send_email(to_email, subject, body)
+
+        if method in ['sms', 'both']:
+            if task.reminder_phone:
+                ok_sms = send_sms(task.reminder_phone, body)
+            else:
+                ok_sms = False
+
+        if (method == 'email' and ok_email) or (method == 'sms' and ok_sms) or (method == 'both' and ok_email and ok_sms):
+            task.reminder_sent = True
+            sent += 1
+
+    if sent:
+        db.session.commit()
+
+    return jsonify({'sent': sent, 'due': len(due)}), 200

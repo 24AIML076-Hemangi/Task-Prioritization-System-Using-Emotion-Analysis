@@ -127,51 +127,41 @@ function submitSignup(fullname, email, username, password) {
     signupBtn.disabled = true;
     signupBtn.textContent = 'Creating Account...';
     
-    // Here you would typically send signup request to your backend
-    // Example:
-    // fetch('/api/signup', {
-    //     method: 'POST',
-    //     headers: {
-    //         'Content-Type': 'application/json',
-    //     },
-    //     body: JSON.stringify({
-    //         fullname: fullname,
-    //         email: email,
-    //         username: username,
-    //         password: password
-    //     })
-    // })
-    // .then(response => response.json())
-    // .then(data => {
-    //     if (data.success) {
-    //         successMessage.textContent = 'Account created successfully! Redirecting to login...';
-    //         successMessage.classList.add('show');
-    //         setTimeout(() => {
-    //             window.location.href = 'login.html';
-    //         }, 2000);
-    //     } else {
-    //         showError('Account creation failed: ' + data.message);
-    //         signupBtn.disabled = false;
-    //         signupBtn.textContent = 'Create Account';
-    //     }
-    // })
-    // .catch(error => {
-    //     console.error('Error:', error);
-    //     signupBtn.disabled = false;
-    //     signupBtn.textContent = 'Create Account';
-    // });
-    
-    // For demo purposes - simulate successful signup
-    console.log('Signup data:', { fullname, email, username });
-    
-    setTimeout(() => {
-        successMessage.textContent = 'Account created successfully! Redirecting to login...';
-        successMessage.classList.add('show');
-        
-        setTimeout(() => {
-            window.location.href = 'login.html';
-        }, 2000);
-    }, 1000);
+    // Call signup API
+    fetch('http://localhost:5000/api/auth/signup', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            email: email,
+            password: password
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.id) {
+            // Success - user created
+            console.log('✓ Account created:', data);
+            successMessage.textContent = 'Account created successfully! Redirecting to login...';
+            successMessage.classList.add('show');
+            
+            setTimeout(() => {
+                window.location.href = 'login.html';
+            }, 2000);
+        } else {
+            // Error
+            showError('emailError', data.error || 'Account creation failed');
+            signupBtn.disabled = false;
+            signupBtn.textContent = 'Create Account';
+        }
+    })
+    .catch(error => {
+        console.error('❌ Signup error:', error);
+        showError('emailError', 'Server connection failed. Is the backend running?');
+        signupBtn.disabled = false;
+        signupBtn.textContent = 'Create Account';
+    });
 }
 
 // Password strength indicator

@@ -1,15 +1,18 @@
 /* ============================================
-   TICKTICK-INSPIRED MINIMAL DASHBOARD
-   Clean, Functional, Less is More
+   TASK PRIORITIZE - 3-PANEL LAYOUT
+   TickTick-Inspired Minimal Design
+   Left Nav | Center Tasks | Right Calendar
    ============================================ */
 
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 :root {
-    --primary: #5b21b6;
-    --primary-light: #667eea;
-    --bg: #fafbfc;
+    --primary: #2f74ff;
+    --primary-light: #6aa9ff;
+    --bg: #f5f7fb;
     --surface: #ffffff;
-    --border: #e5e7eb;
-    --text: #1f2937;
+    --border: #e6eaf0;
+    --text: #1f2a44;
     --text-muted: #6b7280;
     
     --color-red: #ef4444;
@@ -22,14 +25,23 @@
     --transition: 0.15s ease;
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
 
 html, body {
     height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
 }
 
 /* ============================================
@@ -44,13 +56,13 @@ html, body {
     border-bottom: 1px solid var(--border);
     box-shadow: var(--shadow);
     z-index: 100;
+    flex-shrink: 0;
 }
 
 .navbar-content {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 16px;
+    max-width: 100%;
     height: 100%;
+    padding: 0 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -81,26 +93,26 @@ html, body {
 .navbar-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
 }
 
-.toggle-calendar-btn {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    width: 32px;
-    height: 32px;
-    border-radius: var(--radius);
+.btn-emotion-scan {
+    background: transparent;
+    border: none;
+    font-size: 20px;
     cursor: pointer;
-    font-size: 16px;
+    padding: 4px 8px;
     transition: var(--transition);
-    display: none;
 }
 
-.toggle-calendar-btn:hover { background: var(--border); }
+.btn-emotion-scan:hover {
+    transform: scale(1.1);
+}
 
 .user-name {
     font-size: 13px;
     color: var(--text-muted);
+    min-width: 60px;
 }
 
 .btn-logout {
@@ -113,130 +125,106 @@ html, body {
     transition: var(--transition);
 }
 
-.btn-logout:hover { color: var(--primary); }
+.btn-logout:hover {
+    color: var(--primary);
+}
 
 /* ============================================
-   LAYOUT
+   MAIN CONTAINER - 3-Panel Layout
    ============================================ */
-
-body {
-    display: flex;
-    flex-direction: column;
-}
 
 .container {
     display: flex;
     flex: 1;
     overflow: hidden;
+    gap: 0;
 }
 
 /* ============================================
-   SIDEBAR (CALENDAR)
+   LEFT SIDEBAR - Navigation & Filters
    ============================================ */
 
-.sidebar {
+.sidebar-left {
     width: 240px;
     background: var(--surface);
     border-right: 1px solid var(--border);
     padding: 16px;
     overflow-y: auto;
-    display: none;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
 }
 
-.sidebar.visible {
-    display: block;
+.nav-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
 }
 
-.calendar-widget {
-    font-size: 13px;
-}
-
-.calendar-widget h3 {
-    font-size: 12px;
+.nav-section-title {
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
-    color: var(--text);
-    margin-bottom: 12px;
-    letter-spacing: 0.5px;
-}
-
-.mini-calendar {
-    margin-bottom: 12px;
-}
-
-.cal-header {
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 8px;
-}
-
-.cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
-}
-
-.cal-label {
-    text-align: center;
-    font-size: 11px;
     color: var(--text-muted);
-    font-weight: 500;
-    padding: 4px 0;
+    letter-spacing: 0.5px;
+    padding: 12px 0 8px 0;
+    margin: 0;
 }
 
-.cal-day {
-    aspect-ratio: 1;
+.nav-section-title:first-child {
+    padding-top: 0;
+}
+
+.nav-item {
     background: transparent;
     border: none;
+    padding: 10px 12px;
+    margin: 2px 0;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 12px;
-    color: var(--text);
-    transition: var(--transition);
-}
-
-.cal-day:hover { background: var(--bg); }
-.cal-day.selected { background: var(--primary); color: white; font-weight: 600; }
-
-.calendar-nav {
-    display: flex;
-    gap: 4px;
-    justify-content: center;
-    margin-top: 8px;
-}
-
-.cal-btn {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
-    cursor: pointer;
     font-size: 14px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
     transition: var(--transition);
+    text-align: left;
+    font-weight: 500;
 }
 
-.cal-btn:hover { background: var(--border); }
+.nav-item:hover {
+    background: var(--bg);
+    color: var(--primary);
+}
+
+.nav-item.active {
+    background: var(--primary);
+    color: white;
+}
+
+.nav-item .icon {
+    display: inline-block;
+    width: 16px;
+    text-align: center;
+    font-size: 16px;
+}
 
 /* ============================================
-   MAIN CONTENT
+   CENTER PANEL - Main Content (PRIMARY)
    ============================================ */
 
-.main {
+.main-content {
     flex: 1;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     padding: 16px;
-    max-width: 800px;
-    margin: 0 auto;
-    width: 100%;
+    background: var(--bg);
 }
 
-/* ============================================
-   TASK INPUT
-   ============================================ */
-
 .task-adder {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
 }
 
 .task-input {
@@ -260,24 +248,48 @@ body {
     color: var(--text-muted);
 }
 
-/* ============================================
-   EMOTION BADGE (MINIMAL)
-   ============================================ */
+.view-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+}
 
-.emotion-badge {
-    background: var(--bg);
+.view-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.task-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--surface);
+    padding: 4px 12px;
+    border-radius: 20px;
     border: 1px solid var(--border);
-    padding: 8px 12px;
+}
+
+/* Emotion Badge */
+.emotion-badge {
+    background: var(--surface);
+    border: 1px solid var(--color-yellow);
+    padding: 10px 14px;
     border-radius: var(--radius);
     margin-bottom: 12px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 10px;
     font-size: 13px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(234, 179, 8, 0.1);
 }
 
-#emotionIcon { font-size: 16px; }
+#emotionIcon {
+    font-size: 18px;
+}
 
 .badge-close {
     background: transparent;
@@ -286,71 +298,109 @@ body {
     cursor: pointer;
     font-size: 18px;
     padding: 0;
+    transition: var(--transition);
 }
 
-/* ============================================
-   TASK LIST
-   ============================================ */
+.badge-close:hover {
+    color: var(--text);
+}
 
+/* Task List Container */
 .tasks-list {
+    flex: 1;
+    overflow-y: auto;
     background: var(--surface);
     border-radius: var(--radius);
     border: 1px solid var(--border);
-    padding: 12px 0;
-    overflow: hidden;
-}
-
-.list-header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    padding: 0;
+}
+
+#tasksList {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+/* Task Group Header */
+.task-group-header {
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-}
-
-.list-header h2 {
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.task-count {
-    font-size: 12px;
     background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
     color: var(--text-muted);
-    padding: 2px 8px;
-    border-radius: 4px;
+    letter-spacing: 0.5px;
+    margin-top: 0;
 }
 
-.tasks {
+.task-group-header:first-child {
+    margin-top: 0;
+}
+
+.task-group {
     display: flex;
     flex-direction: column;
 }
 
-/* ============================================
-   TASK ITEMS (MINIMAL, CLEAN)
-   ============================================ */
-
+/* Task Item */
 .task-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 16px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
     transition: var(--transition);
     border-left: 3px solid var(--color-green);
-    cursor: grab;
+    cursor: pointer;
 }
 
-.task-item:last-child { border-bottom: none; }
-.task-item:hover { background: var(--bg); }
-.task-item.completed { opacity: 0.5; }
-.task-item.completed .task-name { text-decoration: line-through; color: var(--text-muted); }
+.task-item:hover {
+    background: var(--bg);
+}
 
-/* Priority border colors */
-.task-item.imp-urg { border-left-color: var(--color-red); }
-.task-item.imp-nurg { border-left-color: var(--color-orange); }
-.task-item.nimp-urg { border-left-color: var(--color-yellow); }
-.task-item.nimp-nurg { border-left-color: var(--color-green); }
+.task-item.completed {
+    opacity: 0.6;
+}
+
+.task-item.completed .task-name {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+/* Priority border colors (Eisenhower Matrix) */
+.task-item.imp-urg {
+    border-left-color: var(--color-red);
+}
+
+.task-item.imp-nurg {
+    border-left-color: var(--color-orange);
+}
+
+.task-item.nimp-urg {
+    border-left-color: var(--color-yellow);
+}
+
+.task-item.nimp-nurg {
+    border-left-color: var(--color-green);
+}
+
+.task-item.emotion-suggested {
+    background: rgba(102, 126, 234, 0.05);
+    border-bottom: 1px dashed var(--border);
+}
+
+.task-item.emotion-suggested::before {
+    content: '';
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--primary);
+    margin-right: 4px;
+}
 
 .task-checkbox {
     width: 18px;
@@ -369,8 +419,14 @@ body {
 
 .task-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.task-item:hover .task-actions {
+    opacity: 1;
 }
 
 .task-delete {
@@ -381,48 +437,287 @@ body {
     font-size: 16px;
     padding: 4px;
     transition: var(--transition);
+    flex-shrink: 0;
 }
 
-.task-delete:hover { color: #dc2626; }
+.task-delete:hover {
+    color: #dc2626;
+}
 
-/* ============================================
-   EMPTY STATE
-   ============================================ */
+/* Task Controls (Importance/Urgency Dropdowns) */
+.task-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    /* Always visible, removed opacity: 0 */
+}
 
+.task-item:hover .task-controls {
+    /* opacity set to 1 by default now, removed opacity: 1 here */
+}
+
+.task-list,
+.task-importance,
+.task-urgency {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: white;
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.task-list:hover,
+.task-importance:hover,
+.task-urgency:hover {
+    border-color: var(--primary);
+    background: rgba(47, 116, 255, 0.04);
+}
+
+.task-list:focus,
+.task-importance:focus,
+.task-urgency:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(47, 116, 255, 0.12);
+}
+
+/* Empty State */
 .empty-state {
     text-align: center;
-    padding: 40px 20px;
+    padding: 60px 20px;
     color: var(--text-muted);
     font-size: 14px;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* ============================================
-   FAB BUTTON
+   RIGHT PANEL - Calendar (SECONDARY / Toggle)
    ============================================ */
 
-.fab {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    padding: 10px 16px;
-    border-radius: 28px;
-    background: linear-gradient(135deg, var(--primary-light), var(--primary));
-    color: white;
+.sidebar-right {
+    width: 280px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.right-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.btn-icon {
+    background: transparent;
     border: none;
+    font-size: 18px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    transition: var(--transition);
+    display: none;
+}
+
+.btn-icon:hover {
+    color: var(--text);
+}
+
+.calendar-widget {
+    font-size: 13px;
+}
+
+.calendar-widget h3 {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text);
+    margin-bottom: 12px;
+    letter-spacing: 0.5px;
+}
+
+.mini-calendar {
+    margin-bottom: 8px;
+}
+
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.cal-label {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+    padding: 4px 0;
+}
+
+.cal-day {
+    aspect-ratio: 1;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text);
+    transition: var(--transition);
+    font-weight: 500;
+    padding: 0;
+}
+
+.cal-day:hover {
+    background: var(--bg);
+    border-color: var(--border);
+}
+
+.cal-day.selected {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    font-weight: 600;
+}
+
+.calendar-nav {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.calendar-nav .cal-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
     cursor: pointer;
     font-size: 14px;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(91, 33, 182, 0.3);
     transition: var(--transition);
-    z-index: 50;
+    font-weight: 600;
 }
 
-.fab:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(91, 33, 182, 0.4);
+.calendar-nav .cal-btn:hover {
+    background: var(--border);
+    color: var(--primary);
 }
 
-.fab:active { transform: scale(0.95); }
+.cal-month-year {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text);
+    flex: 1;
+    text-align: center;
+}
+
+.btn-clear-filter {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: var(--transition);
+    font-weight: 500;
+}
+
+.btn-clear-filter:hover {
+    background: var(--border);
+    color: var(--text);
+}
+
+/* Task Details Panel */
+.task-details-panel {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+}
+
+.task-details-panel h3 {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    letter-spacing: 0.5px;
+}
+
+#taskDetailsContent {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.detail-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.detail-form label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.detail-form input,
+.detail-form select {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.detail-form input:focus,
+.detail-form select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(47, 116, 255, 0.12);
+}
+
+.detail-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 6px;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.detail-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.detail-value {
+    color: var(--text);
+    font-weight: 600;
+}
 
 /* ============================================
    MODALS
@@ -439,7 +734,9 @@ body {
     z-index: 200;
 }
 
-.modal-overlay.show { display: block; }
+.modal-overlay.show {
+    display: block;
+}
 
 .modal {
     display: none;
@@ -451,15 +748,17 @@ body {
     border-radius: 12px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     width: 90%;
-    max-width: 400px;
+    max-width: 420px;
     z-index: 210;
     opacity: 0;
     transition: var(--transition);
+    flex-direction: column;
+    max-height: 90vh;
+    overflow: hidden;
 }
 
 .modal.show {
     display: flex;
-    flex-direction: column;
     transform: translate(-50%, -50%) scale(1);
     opacity: 1;
 }
@@ -470,6 +769,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-shrink: 0;
 }
 
 .modal-header h2 {
@@ -492,7 +792,9 @@ body {
     transition: var(--transition);
 }
 
-.modal-close:hover { color: var(--text); }
+.modal-close:hover {
+    color: var(--text);
+}
 
 .modal-body {
     padding: 16px;
@@ -505,6 +807,8 @@ body {
     border-radius: 8px;
     background: #000;
     margin-bottom: 12px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
 }
 
 .status-text {
@@ -519,8 +823,8 @@ body {
 }
 
 .emotion-icon-large {
-    font-size: 48px;
-    margin-bottom: 10px;
+    font-size: 56px;
+    margin-bottom: 12px;
 }
 
 .emotion-result h3 {
@@ -528,6 +832,7 @@ body {
     font-weight: 600;
     margin-bottom: 8px;
     text-transform: capitalize;
+    color: var(--text);
 }
 
 .emotion-result p {
@@ -538,6 +843,7 @@ body {
 
 .confidence-text {
     font-weight: 500;
+    color: var(--text);
 }
 
 .modal-footer {
@@ -546,6 +852,7 @@ body {
     display: flex;
     gap: 8px;
     justify-content: flex-end;
+    flex-shrink: 0;
 }
 
 .btn-primary {
@@ -562,6 +869,7 @@ body {
 
 .btn-primary:hover {
     background: #4c1d95;
+    transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -581,52 +889,106 @@ body {
 }
 
 /* ============================================
-   RESPONSIVE
+   RESPONSIVE DESIGN
    ============================================ */
 
+@media (max-width: 1024px) {
+    .sidebar-right {
+        width: 240px;
+    }
+}
+
 @media (max-width: 768px) {
-    .navbar-content {
-        padding: 0 12px;
+    .sidebar-left {
+        position: fixed;
+        left: -240px;
+        top: 56px;
+        height: calc(100vh - 56px);
+        z-index: 95;
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+        transition: left 0.3s ease;
     }
 
-    .toggle-calendar-btn {
+    .sidebar-left.visible {
+        left: 0;
+    }
+
+    .sidebar-right {
+        position: fixed;
+        right: -280px;
+        top: 56px;
+        height: calc(100vh - 56px);
+        z-index: 95;
+        box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+        transition: right 0.3s ease;
+        border-left: none;
+        border-right: 1px solid var(--border);
+    }
+
+    .sidebar-right.visible {
+        right: 0;
+    }
+
+    .btn-icon {
         display: block;
     }
 
-    .sidebar {
-        position: absolute;
-        left: 0;
-        top: 56px;
-        width: 200px;
-        height: calc(100vh - 56px);
-        z-index: 90;
-        border-right: 1px solid var(--border);
-        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
-    }
-
-    .main {
+    .main-content {
         padding: 12px;
-        max-width: 100%;
     }
 
     .task-item {
         padding: 10px 12px;
     }
 
-    .fab {
-        padding: 10px 12px;
-        font-size: 13px;
-        bottom: 16px;
-        right: 16px;
-    }
-
     .modal {
         max-width: 95%;
+        max-height: 90vh;
     }
 }
 
-@media (min-width: 1024px) {
-    .sidebar {
-        display: block;
+@media (max-width: 480px) {
+    .navbar-brand h1 {
+        display: none;
+    }
+
+    .view-header h2 {
+        font-size: 16px;
+    }
+
+    .task-count {
+        font-size: 11px;
+        padding: 2px 8px;
+    }
+
+    .sidebar-left {
+        width: 200px;
+        left: -200px;
+    }
+
+    .sidebar-right {
+        width: 240px;
     }
 }
+
+/* ============================================
+   SCROLLBARS
+   ============================================ */
+
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+

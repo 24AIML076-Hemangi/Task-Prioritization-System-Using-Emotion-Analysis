@@ -8,6 +8,13 @@ from flask_cors import cross_origin
 import secrets
 import re
 from datetime import datetime, timedelta
+import sys
+import os
+
+# Import database and User model
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from database import db
+from models import User
 
 # Blueprint
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -56,6 +63,61 @@ def mock_send_email(email, code):
 
 
 # -------------------- ROUTES --------------------
+
+@auth_bp.route("/signup", methods=["POST"])
+@cross_origin()
+def signup():
+    """Register a new user"""
+    data = request.get_json() or {}
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
+
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return jsonify({"error": "Invalid email format"}), 400
+
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    # Check if user already exists
+    existing_user = User.query.filter_by(email=email).first()
+    if existing_user:
+        return jsonify({"error": "Email already registered"}), 400
+
+    # Create new user
+    new_user = User(email=email)
+    new_user.set_password(password)
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    print(f"✓ User registered: {email}")
+    return jsonify(new_user.to_dict()), 201
+
+
+@auth_bp.route("/login", methods=["POST"])
+@cross_origin()
+def login():
+    """Authenticate user and return session/token"""
+    data = request.get_json() or {}
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user or not user.check_password(password):
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    print(f"✓ User logged in: {email}")
+    return jsonify({
+        "message": "Login successful",
+        "user": user.to_dict()
+    }), 200
+
 
 @auth_bp.route("/forgot-password", methods=["POST"])
 @cross_origin()
@@ -131,9 +193,15 @@ def reset_password():
     if not token.verified or token.code != code:
         return jsonify({"error": "Invalid reset code"}), 400
 
-    # 🔥 TODO: Update password in DB (SQLite)
-    # user.password = hash(new_password)
-
+    # Update password in DB
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    user.set_password(new_password)
+    db.session.commit()
+    
+    print(f"✓ Password reset for: {email}")
     del reset_tokens[email]
 
     return jsonify({

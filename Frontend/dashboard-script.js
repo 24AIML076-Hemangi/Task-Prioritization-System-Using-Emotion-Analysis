@@ -13,6 +13,9 @@ class TaskManager {
         this.calendarMonth = new Date().getMonth();
         this.calendarYear = new Date().getFullYear();
         this.selectedDate = null;
+        this.activeFilter = 'today';
+        this.taskLists = this.loadTaskLists();
+        this.selectedTaskId = null;
 
         this.init();
     }
@@ -24,13 +27,16 @@ class TaskManager {
             return;
         }
 
-        this.userId = localStorage.getItem('userName') || 'User';
-        document.getElementById('userInfo').textContent = this.userId;
+        // Use email as user_id for API calls (unique identifier)
+        this.userId = localStorage.getItem('userEmail') || localStorage.getItem('userName') || 'User';
+        const userName = localStorage.getItem('userName') || 'User';
+        document.getElementById('userInfo').textContent = userName;
 
         await this.loadTasks();
         this.setupEventListeners();
         this.generateCalendar();
         this.renderTasks();
+        this.startReminderLoop();
     }
 
     /* ============================================
@@ -53,19 +59,29 @@ class TaskManager {
 
     async createTask(title) {
         try {
+            const payload = {
+                user_id: this.userId,
+                title: title.trim(),
+                importance: 'not-important',
+                urgency: 'not-urgent',
+            };
+            
+            console.log('📝 Creating task:', payload);
+            
             const response = await fetch(this.apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: this.userId,
-                    title: title.trim(),
-                    importance: 'not-important',
-                    urgency: 'not-urgent',
-                }),
+                body: JSON.stringify(payload),
             });
 
             if (response.ok) {
-                return await response.json();
+                const task = await response.json();
+                this.setTaskList(task.id, 'inbox');
+                console.log('✅ Task created:', task);
+                return task;
+            } else {
+                const error = await response.json();
+                console.error('❌ Task creation failed:', error);
             }
         } catch (error) {
             console.error('Create error:', error);
@@ -77,6 +93,10 @@ class TaskManager {
         try {
             await fetch(`${this.apiUrl}/${id}`, { method: 'DELETE' });
             this.tasks = this.tasks.filter(t => t.id !== id);
+            if (this.taskLists[id]) {
+                delete this.taskLists[id];
+                this.saveTaskLists();
+            }
             this.renderTasks();
         } catch (error) {
             console.error('Delete error:', error);
@@ -107,7 +127,7 @@ class TaskManager {
         const list = document.getElementById('tasksList');
         const count = document.getElementById('taskCount');
 
-        let filtered = this.tasks;
+        let filtered = this.applyFilter(this.tasks);
 
         // Filter by selected date if any
         if (this.selectedDate) {
@@ -121,7 +141,8 @@ class TaskManager {
         const active = filtered.filter(t => !t.completed);
         const completed = filtered.filter(t => t.completed);
 
-        count.textContent = active.length;
+        console.log(`📊 Rendering tasks: ${active.length} active, ${completed.length} completed`);
+        count.textContent = `${active.length} tasks`;
 
         if (active.length === 0 && completed.length === 0) {
             list.innerHTML = '<div class="empty-state"><p>📋 No tasks. Add one to get started!</p></div>';
@@ -144,6 +165,7 @@ class TaskManager {
             html += '</div>';
         }
 
+        console.log('🎨 HTML to render:', html.substring(0, 200) + '...');
         list.innerHTML = html;
         this.attachListeners();
     }
@@ -152,11 +174,32 @@ class TaskManager {
         const text = task.title || task.text;
         const matrix = this.getMatrixClass(task);
         const checked = task.completed ? 'checked' : '';
+        const list = this.getTaskList(task.id);
 
         return `
             <div class="task-item ${task.completed ? 'completed' : ''} ${matrix}" data-id="${task.id}">
                 <input type="checkbox" class="task-checkbox" ${checked} />
                 <span class="task-name">${this.escape(text)}</span>
+                
+                <div class="task-controls">
+                    <select class="task-list" data-id="${task.id}" title="Set list">
+                        <option value="inbox" ${list === 'inbox' ? 'selected' : ''}>Inbox</option>
+                        <option value="work" ${list === 'work' ? 'selected' : ''}>Work</option>
+                        <option value="study" ${list === 'study' ? 'selected' : ''}>Study</option>
+                        <option value="personal" ${list === 'personal' ? 'selected' : ''}>Personal</option>
+                    </select>
+
+                    <select class="task-importance" data-id="${task.id}" title="Set importance">
+                        <option value="important" ${task.importance === 'important' ? 'selected' : ''}>⭐ Important</option>
+                        <option value="not-important" ${task.importance === 'not-important' ? 'selected' : ''}>☆ Not Important</option>
+                    </select>
+                    
+                    <select class="task-urgency" data-id="${task.id}" title="Set urgency">
+                        <option value="urgent" ${task.urgency === 'urgent' ? 'selected' : ''}>🚨 Urgent</option>
+                        <option value="not-urgent" ${task.urgency === 'not-urgent' ? 'selected' : ''}>◯ Not Urgent</option>
+                    </select>
+                </div>
+                
                 <div class="task-actions">
                     <button class="task-delete" data-id="${task.id}" title="Delete">
                         ✕
@@ -184,6 +227,37 @@ class TaskManager {
             });
         });
 
+        // Importance dropdown
+        document.querySelectorAll('.task-importance').forEach(select => {
+            select.addEventListener('change', (e) => {
+                const id = parseInt(e.target.dataset.id);
+                const importance = e.target.value;
+                console.log(`⭐ Importance changed for task ${id}: ${importance}`);
+                this.updateTaskPriority(id, importance, 'importance');
+            });
+        });
+
+
+        // List dropdown
+        document.querySelectorAll('.task-list').forEach(select => {
+            select.addEventListener('change', (e) => {
+                const id = parseInt(e.target.dataset.id);
+                const list = e.target.value;
+                this.setTaskList(id, list);
+                this.renderTasks();
+            });
+        });
+
+        // Urgency dropdown
+        document.querySelectorAll('.task-urgency').forEach(select => {
+            select.addEventListener('change', (e) => {
+                const id = parseInt(e.target.dataset.id);
+                const urgency = e.target.value;
+                console.log(`🚨 Urgency changed for task ${id}: ${urgency}`);
+                this.updateTaskPriority(id, urgency, 'urgency');
+            });
+        });
+
         // Delete buttons
         document.querySelectorAll('.task-delete').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -193,6 +267,225 @@ class TaskManager {
                 }
             });
         });
+        
+        // Task details panel
+        document.querySelectorAll('.task-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.closest('.task-actions') || e.target.closest('.task-controls') || e.target.classList.contains('task-checkbox')) {
+                    return;
+                }
+                const id = parseInt(item.dataset.id);
+                this.selectedTaskId = id;
+                const task = this.tasks.find(t => t.id === id);
+                if (task) this.renderTaskDetails(task);
+            });
+        });
+
+        console.log(`📌 Listeners attached: ${document.querySelectorAll('.task-checkbox').length} tasks`);
+    }
+
+    async updateTaskPriority(id, value, field) {
+        try {
+            const task = this.tasks.find(t => t.id === id);
+            if (!task) return;
+
+            const updateData = { [field]: value };
+            const response = await fetch(`${this.apiUrl}/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData),
+            });
+
+            if (response.ok) {
+                const updated = await response.json();
+                Object.assign(task, updated);
+                this.renderTasks();
+                console.log(`✓ Task ${id} ${field} updated to ${value}`);
+            }
+        } catch (error) {
+            console.error('Priority update error:', error);
+        }
+    }
+
+
+    loadTaskLists() {
+        try {
+            return JSON.parse(localStorage.getItem('taskLists') || '{}');
+        } catch {
+            return {};
+        }
+    }
+
+    saveTaskLists() {
+        localStorage.setItem('taskLists', JSON.stringify(this.taskLists));
+    }
+
+    getTaskList(taskId) {
+        return this.taskLists[taskId] || 'inbox';
+    }
+
+    setTaskList(taskId, list) {
+        this.taskLists[taskId] = list;
+        this.saveTaskLists();
+    }
+
+    applyFilter(tasks) {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const endOfNext7 = new Date(startOfToday);
+        endOfNext7.setDate(endOfNext7.getDate() + 7);
+
+        switch (this.activeFilter) {
+            case 'today':
+                return tasks.filter(t => {
+                    const d = new Date(t.created_at || t.createdAt);
+                    return d >= startOfToday && d < new Date(startOfToday.getTime() + 86400000);
+                });
+            case 'next7days':
+                return tasks.filter(t => {
+                    const d = new Date(t.created_at || t.createdAt);
+                    return d >= startOfToday && d < endOfNext7;
+                });
+            case 'inbox':
+                return tasks.filter(t => this.getTaskList(t.id) === 'inbox');
+            case 'list-work':
+                return tasks.filter(t => this.getTaskList(t.id) === 'work');
+            case 'list-study':
+                return tasks.filter(t => this.getTaskList(t.id) === 'study');
+            case 'list-personal':
+                return tasks.filter(t => this.getTaskList(t.id) === 'personal');
+            case 'important':
+                return tasks.filter(t => t.importance === 'important' && !t.completed);
+            case 'urgent':
+                return tasks.filter(t => t.urgency === 'urgent' && !t.completed);
+            case 'completed':
+                return tasks.filter(t => t.completed);
+            default:
+                return tasks;
+        }
+    }
+
+    renderTaskDetails(task) {
+        const panel = document.getElementById('taskDetailsPanel');
+        const content = document.getElementById('taskDetailsContent');
+        if (!panel || !content) return;
+
+        const due = task.due_at ? new Date(task.due_at) : null;
+        const reminder = task.reminder_at ? new Date(task.reminder_at) : null;
+        const dueValue = due ? this.toLocalInputValue(due) : '';
+        const reminderValue = reminder ? this.toLocalInputValue(reminder) : '';
+
+        content.innerHTML = `
+            <div class="detail-row">
+                <div class="detail-label">Title</div>
+                <div class="detail-value">${this.escape(task.title || '')}</div>
+            </div>
+            <div class="detail-form">
+                <label>Due date</label>
+                <input type="datetime-local" id="detailDue" value="${dueValue}" />
+
+                <label>Reminder</label>
+                <input type="datetime-local" id="detailReminder" value="${reminderValue}" />
+
+                <label>Reminder method</label>
+                <select id="detailMethod">
+                    <option value="" ${!task.reminder_method ? 'selected' : ''}>None</option>
+                    <option value="email" ${task.reminder_method === 'email' ? 'selected' : ''}>Email</option>
+                    <option value="sms" ${task.reminder_method === 'sms' ? 'selected' : ''}>SMS</option>
+                    <option value="both" ${task.reminder_method === 'both' ? 'selected' : ''}>Email + SMS</option>
+                </select>
+
+                <label>Phone (for SMS)</label>
+                <input type="tel" id="detailPhone" placeholder="+1..." value="${task.reminder_phone || ''}" />
+
+                <div class="detail-actions">
+                    <button class="btn-secondary" id="detailClear">Clear</button>
+                    <button class="btn-primary" id="detailSave">Save</button>
+                </div>
+            </div>
+        `;
+
+        panel.style.display = 'block';
+
+        document.getElementById('detailSave').addEventListener('click', () => {
+            this.updateTaskDetails(task.id);
+        });
+
+        document.getElementById('detailClear').addEventListener('click', () => {
+            document.getElementById('detailDue').value = '';
+            document.getElementById('detailReminder').value = '';
+            document.getElementById('detailMethod').value = '';
+            document.getElementById('detailPhone').value = '';
+            this.updateTaskDetails(task.id, true);
+        });
+    }
+
+    async updateTaskDetails(id, clearAll = false) {
+        const task = this.tasks.find(t => t.id === id);
+        if (!task) return;
+
+        const dueRaw = document.getElementById('detailDue').value;
+        const reminderRaw = document.getElementById('detailReminder').value;
+        const method = document.getElementById('detailMethod').value;
+        const phone = document.getElementById('detailPhone').value.trim();
+
+        const updateData = {
+            due_at: dueRaw ? new Date(dueRaw).toISOString() : null,
+            reminder_at: reminderRaw ? new Date(reminderRaw).toISOString() : null,
+            reminder_method: method || null,
+            reminder_phone: phone || null,
+        };
+
+        if (clearAll) {
+            updateData.due_at = null;
+            updateData.reminder_at = null;
+            updateData.reminder_method = null;
+            updateData.reminder_phone = null;
+        }
+
+        try {
+            const response = await fetch(`${this.apiUrl}/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData),
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                Object.assign(task, updated);
+                this.renderTasks();
+                this.renderTaskDetails(task);
+            }
+        } catch (error) {
+            console.error('Detail update error:', error);
+        }
+    }
+
+    toLocalInputValue(date) {
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    startReminderLoop() {
+        const run = async () => {
+            try {
+                const res = await fetch(`${this.apiUrl}/reminders/dispatch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: this.userId }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.sent && data.sent > 0) {
+                        console.log(`Reminders sent: ${data.sent}`);
+                    }
+                }
+            } catch (err) {
+                console.log('Reminder dispatch failed');
+            }
+        };
+
+        run();
+        setInterval(run, 60000);
     }
 
     escape(text) {
@@ -299,11 +592,10 @@ class TaskManager {
 
         try {
             // Try real API
-            const res = await fetch('http://localhost:5000/emotion-scan', {
+            const res = await fetch(`${this.apiUrl}/emotion-scan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: base64, user_id: this.userId }),
-                timeout: 5000,
             });
             if (res.ok) {
                 const result = await res.json();
@@ -388,6 +680,19 @@ class TaskManager {
             document.getElementById('sidebar').classList.toggle('visible');
         });
 
+
+        // Sidebar filters
+        document.querySelectorAll('.nav-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.activeFilter = btn.dataset.filter;
+                const title = btn.textContent.trim();
+                document.getElementById('viewTitle').textContent = title || 'Tasks';
+                this.renderTasks();
+            });
+        });
+
         // Calendar nav
         document.getElementById('prevMonth').addEventListener('click', () => {
             this.calendarMonth--;
@@ -407,6 +712,19 @@ class TaskManager {
             this.generateCalendar();
         });
 
+
+        // Clear date filter
+        document.getElementById('clearDateFilter').addEventListener('click', () => {
+            this.selectedDate = null;
+            this.generateCalendar();
+            this.renderTasks();
+        });
+
+        // Close right panel (mobile)
+        document.getElementById('closeRightPanel').addEventListener('click', () => {
+            document.getElementById('sidebarRight').classList.remove('visible');
+        });
+
         // Emotion scan
         document.getElementById('emotionScanBtn').addEventListener('click', () => {
             this.openCamera();
@@ -419,8 +737,6 @@ class TaskManager {
 
         // Result modal
         document.getElementById('closeResult').addEventListener('click', () => this.closeResult());
-        document.getElementById('closeResultBtn').addEventListener('click', () => this.closeResult());
-
         // Emotion badge
         document.getElementById('clearEmotionBtn').addEventListener('click', () => this.clearEmotion());
 

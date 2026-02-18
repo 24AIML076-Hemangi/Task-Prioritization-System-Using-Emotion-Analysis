@@ -33,11 +33,11 @@ def send_email(to_email, subject, body):
             return False
 
     # Default: SMTP
-    host = os.getenv("SMTP_HOST")
+    host = os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER")
     port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER")
-    password = os.getenv("SMTP_PASS")
-    from_email = os.getenv("SMTP_FROM", user)
+    user = os.getenv("SMTP_USER") or os.getenv("SENDER_EMAIL")
+    password = os.getenv("SMTP_PASS") or os.getenv("SENDER_PASSWORD")
+    from_email = os.getenv("SMTP_FROM") or os.getenv("SENDER_EMAIL") or user
 
     if not host or not user or not password or not from_email:
         return _mock_email(to_email, subject, body)
@@ -92,7 +92,7 @@ def _mock_email(to_email, subject, body):
     print("Subject:", subject)
     print("Body:", body)
     print("============================\n")
-    return True
+    return False
 
 
 def _mock_sms(to_phone, body):
@@ -100,4 +100,4 @@ def _mock_sms(to_phone, body):
     print("To:", to_phone)
     print("Body:", body)
     print("==========================\n")
-    return True
+    return False

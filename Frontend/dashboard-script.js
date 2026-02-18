@@ -8,6 +8,7 @@ class TaskManager {
         this.tasks = [];
         this.userId = null;
         this.apiUrl = 'http://localhost:5000/api/tasks';
+        this.authApiUrl = 'http://localhost:5000/api/auth';
         this.currentEmotion = null;
         this.cameraStream = null;
         this.calendarMonth = new Date().getMonth();
@@ -16,6 +17,11 @@ class TaskManager {
         this.activeFilter = 'today';
         this.taskLists = this.loadTaskLists();
         this.selectedTaskId = null;
+        this.userProfile = null;
+        this.scanTimerId = null;
+        this.scanIntervalId = null;
+        this.pendingEmotionResult = null;
+        this.emotionScanEnabled = false;
 
         this.init();
     }
@@ -32,11 +38,13 @@ class TaskManager {
         const userName = localStorage.getItem('userName') || 'User';
         document.getElementById('userInfo').textContent = userName;
 
+        await this.loadUserProfile();
         await this.loadTasks();
         this.setupEventListeners();
         this.generateCalendar();
         this.renderTasks();
         this.startReminderLoop();
+        this.startAutoRefresh();
     }
 
     /* ============================================
@@ -57,13 +65,14 @@ class TaskManager {
         }
     }
 
-    async createTask(title) {
+    async createTask(title, dueAtLocal = null) {
         try {
             const payload = {
                 user_id: this.userId,
                 title: title.trim(),
                 importance: 'not-important',
                 urgency: 'not-urgent',
+                due_at: dueAtLocal,
             };
             
             console.log('📝 Creating task:', payload);
@@ -98,8 +107,59 @@ class TaskManager {
                 this.saveTaskLists();
             }
             this.renderTasks();
+            this.generateCalendar();
         } catch (error) {
             console.error('Delete error:', error);
+        }
+    }
+
+    async loadUserProfile() {
+        try {
+            const response = await fetch(`${this.authApiUrl}/profile?email=${encodeURIComponent(this.userId)}`);
+            if (!response.ok) return;
+            this.userProfile = await response.json();
+            this.populateProfileForm();
+        } catch (error) {
+            console.error('Profile load error:', error);
+        }
+    }
+
+    populateProfileForm() {
+        const methodEl = document.getElementById('profileNotificationMethod');
+        const phoneEl = document.getElementById('profilePhone');
+        if (!methodEl || !phoneEl || !this.userProfile) return;
+
+        methodEl.value = this.userProfile.notification_preference || 'email';
+        phoneEl.value = this.userProfile.phone || '';
+    }
+
+    async saveUserProfile() {
+        const methodEl = document.getElementById('profileNotificationMethod');
+        const phoneEl = document.getElementById('profilePhone');
+        if (!methodEl || !phoneEl) return;
+
+        const payload = {
+            email: this.userId,
+            notification_preference: methodEl.value || 'email',
+            phone: phoneEl.value.trim() || null,
+        };
+
+        try {
+            const response = await fetch(`${this.authApiUrl}/profile`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                alert(data.error || 'Failed to save profile settings');
+                return;
+            }
+            this.userProfile = data;
+            alert('Notification settings saved');
+        } catch (error) {
+            console.error('Profile save error:', error);
+            alert('Unable to save notification settings');
         }
     }
 
@@ -132,10 +192,13 @@ class TaskManager {
         // Filter by selected date if any
         if (this.selectedDate) {
             filtered = filtered.filter(t => {
-                const d = new Date(t.created_at || t.createdAt);
-                return d.toISOString().slice(0, 10) === this.selectedDate;
+                const d = this.getTaskReferenceDate(t);
+                if (!d) return false;
+                return this.getLocalDateKey(d) === this.selectedDate;
             });
         }
+
+        filtered = this.sortTasksForDisplay(filtered);
 
         // Separate completed and active
         const active = filtered.filter(t => !t.completed);
@@ -175,11 +238,15 @@ class TaskManager {
         const matrix = this.getMatrixClass(task);
         const checked = task.completed ? 'checked' : '';
         const list = this.getTaskList(task.id);
+        const dueMeta = this.formatDueMeta(task);
 
         return `
             <div class="task-item ${task.completed ? 'completed' : ''} ${matrix}" data-id="${task.id}">
                 <input type="checkbox" class="task-checkbox" ${checked} />
-                <span class="task-name">${this.escape(text)}</span>
+                <div class="task-main">
+                    <span class="task-name">${this.escape(text)}</span>
+                    ${dueMeta ? `<span class="task-meta ${dueMeta.overdue ? 'overdue' : ''}">${this.escape(dueMeta.label)}</span>` : ''}
+                </div>
                 
                 <div class="task-controls">
                     <select class="task-list" data-id="${task.id}" title="Set list">
@@ -216,6 +283,39 @@ class TaskManager {
         if (imp && !urg) return 'imp-nurg';
         if (!imp && urg) return 'nimp-urg';
         return 'nimp-nurg';
+    }
+
+    getTaskReferenceDate(task) {
+        const dateValue = task.due_at || task.created_at || task.createdAt;
+        if (!dateValue) return null;
+        const d = new Date(dateValue);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    getLocalDateKey(date) {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    formatDueMeta(task) {
+        if (!task.due_at) return null;
+        const due = new Date(task.due_at);
+        if (Number.isNaN(due.getTime())) return null;
+
+        const formatted = due.toLocaleString([], {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+
+        return {
+            label: `Deadline: ${formatted}`,
+            overdue: !task.completed && due.getTime() < Date.now(),
+        };
     }
 
     attachListeners() {
@@ -338,12 +438,14 @@ class TaskManager {
         switch (this.activeFilter) {
             case 'today':
                 return tasks.filter(t => {
-                    const d = new Date(t.created_at || t.createdAt);
+                    const d = this.getTaskReferenceDate(t);
+                    if (!d) return false;
                     return d >= startOfToday && d < new Date(startOfToday.getTime() + 86400000);
                 });
             case 'next7days':
                 return tasks.filter(t => {
-                    const d = new Date(t.created_at || t.createdAt);
+                    const d = this.getTaskReferenceDate(t);
+                    if (!d) return false;
                     return d >= startOfToday && d < endOfNext7;
                 });
             case 'inbox':
@@ -365,6 +467,35 @@ class TaskManager {
         }
     }
 
+    getMatrixRank(task) {
+        const imp = task.importance === 'important';
+        const urg = task.urgency === 'urgent';
+        if (imp && urg) return 1;
+        if (imp && !urg) return 2;
+        if (!imp && urg) return 3;
+        return 4;
+    }
+
+    compareTaskEffort(a, b) {
+        const aLen = (a.title || '').trim().length;
+        const bLen = (b.title || '').trim().length;
+
+        if (this.currentEmotion === 'stressed') return aLen - bLen;
+        if (this.currentEmotion === 'focused') return bLen - aLen;
+
+        const aTime = new Date(a.created_at || 0).getTime();
+        const bTime = new Date(b.created_at || 0).getTime();
+        return aTime - bTime;
+    }
+
+    sortTasksForDisplay(tasks) {
+        return [...tasks].sort((a, b) => {
+            const rankDiff = this.getMatrixRank(a) - this.getMatrixRank(b);
+            if (rankDiff !== 0) return rankDiff;
+            return this.compareTaskEffort(a, b);
+        });
+    }
+
     renderTaskDetails(task) {
         const panel = document.getElementById('taskDetailsPanel');
         const content = document.getElementById('taskDetailsContent');
@@ -374,6 +505,8 @@ class TaskManager {
         const reminder = task.reminder_at ? new Date(task.reminder_at) : null;
         const dueValue = due ? this.toLocalInputValue(due) : '';
         const reminderValue = reminder ? this.toLocalInputValue(reminder) : '';
+        const defaultMethod = task.reminder_method || (this.userProfile?.notification_preference || '');
+        const defaultPhone = task.reminder_phone || (this.userProfile?.phone || '');
 
         content.innerHTML = `
             <div class="detail-row">
@@ -389,14 +522,14 @@ class TaskManager {
 
                 <label>Reminder method</label>
                 <select id="detailMethod">
-                    <option value="" ${!task.reminder_method ? 'selected' : ''}>None</option>
-                    <option value="email" ${task.reminder_method === 'email' ? 'selected' : ''}>Email</option>
-                    <option value="sms" ${task.reminder_method === 'sms' ? 'selected' : ''}>SMS</option>
-                    <option value="both" ${task.reminder_method === 'both' ? 'selected' : ''}>Email + SMS</option>
+                    <option value="" ${!defaultMethod ? 'selected' : ''}>None</option>
+                    <option value="email" ${defaultMethod === 'email' ? 'selected' : ''}>Email</option>
+                    <option value="sms" ${defaultMethod === 'sms' ? 'selected' : ''}>SMS</option>
+                    <option value="both" ${defaultMethod === 'both' ? 'selected' : ''}>Email + SMS</option>
                 </select>
 
                 <label>Phone (for SMS)</label>
-                <input type="tel" id="detailPhone" placeholder="+1..." value="${task.reminder_phone || ''}" />
+                <input type="tel" id="detailPhone" placeholder="+1..." value="${defaultPhone}" />
 
                 <div class="detail-actions">
                     <button class="btn-secondary" id="detailClear">Clear</button>
@@ -430,8 +563,8 @@ class TaskManager {
         const phone = document.getElementById('detailPhone').value.trim();
 
         const updateData = {
-            due_at: dueRaw ? new Date(dueRaw).toISOString() : null,
-            reminder_at: reminderRaw ? new Date(reminderRaw).toISOString() : null,
+            due_at: dueRaw || null,
+            reminder_at: reminderRaw || null,
             reminder_method: method || null,
             reminder_phone: phone || null,
         };
@@ -454,6 +587,7 @@ class TaskManager {
                 Object.assign(task, updated);
                 this.renderTasks();
                 this.renderTaskDetails(task);
+                this.generateCalendar();
             }
         } catch (error) {
             console.error('Detail update error:', error);
@@ -488,6 +622,35 @@ class TaskManager {
         setInterval(run, 60000);
     }
 
+    startAutoRefresh() {
+        const run = async () => {
+            try {
+                const before = JSON.stringify(this.tasks);
+                await this.loadTasks();
+                const after = JSON.stringify(this.tasks);
+
+                if (before !== after) {
+                    this.renderTasks();
+                    this.generateCalendar();
+
+                    if (this.selectedTaskId) {
+                        const selected = this.tasks.find(t => t.id === this.selectedTaskId);
+                        if (selected) {
+                            this.renderTaskDetails(selected);
+                        } else {
+                            const panel = document.getElementById('taskDetailsPanel');
+                            if (panel) panel.style.display = 'none';
+                        }
+                    }
+                }
+            } catch (err) {
+                console.log('Auto refresh failed');
+            }
+        };
+
+        setInterval(run, 5000);
+    }
+
     escape(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -500,7 +663,16 @@ class TaskManager {
 
     generateCalendar() {
         const container = document.getElementById('miniCalendar');
-        const now = new Date();
+        const dueDateSet = new Set(
+            this.tasks
+                .filter(t => t.due_at)
+                .map(t => {
+                    const d = new Date(t.due_at);
+                    if (Number.isNaN(d.getTime())) return null;
+                    return this.getLocalDateKey(d);
+                })
+                .filter(Boolean)
+        );
 
         const firstDay = new Date(this.calendarYear, this.calendarMonth, 1).getDay();
         const lastDate = new Date(this.calendarYear, this.calendarMonth + 1, 0).getDate();
@@ -522,9 +694,10 @@ class TaskManager {
         // Days
         for (let d = 1; d <= lastDate; d++) {
             const date = new Date(this.calendarYear, this.calendarMonth, d);
-            const iso = date.toISOString().slice(0, 10);
-            const isSelected = this.selectedDate === iso ? 'selected' : '';
-            html += `<button class="cal-day ${isSelected}" data-date="${iso}">${d}</button>`;
+            const dayKey = this.getLocalDateKey(date);
+            const isSelected = this.selectedDate === dayKey ? 'selected' : '';
+            const hasDeadline = dueDateSet.has(dayKey) ? 'has-deadline' : '';
+            html += `<button class="cal-day ${isSelected} ${hasDeadline}" data-date="${dayKey}">${d}</button>`;
         }
 
         html += '</div>';
@@ -535,10 +708,25 @@ class TaskManager {
             btn.addEventListener('click', (e) => {
                 const date = e.target.dataset.date;
                 this.selectedDate = this.selectedDate === date ? null : date;
+                if (this.selectedDate) {
+                    this.prefillDueDateFromCalendar(this.selectedDate);
+                }
                 this.generateCalendar();
                 this.renderTasks();
             });
         });
+    }
+
+    prefillDueDateFromCalendar(selectedIsoDate) {
+        const dueInput = document.getElementById('taskDueInput');
+        if (!dueInput) return;
+
+        const existing = dueInput.value ? new Date(dueInput.value) : null;
+        const hours = existing && !Number.isNaN(existing.getTime()) ? existing.getHours() : 18;
+        const minutes = existing && !Number.isNaN(existing.getTime()) ? existing.getMinutes() : 0;
+        const selectedDate = new Date(`${selectedIsoDate}T00:00:00`);
+        selectedDate.setHours(hours, minutes, 0, 0);
+        dueInput.value = this.toLocalInputValue(selectedDate);
     }
 
     /* ============================================
@@ -546,6 +734,9 @@ class TaskManager {
        ============================================ */
 
     async openCamera() {
+        const agreed = await this.ensureEmotionConsent();
+        if (!agreed) return;
+
         const modal = document.getElementById('cameraModal');
         const video = document.getElementById('videoFeed');
         const msg = document.getElementById('cameraMessage');
@@ -560,13 +751,21 @@ class TaskManager {
             });
             video.srcObject = this.cameraStream;
             await video.play();
-            msg.textContent = 'Ready to scan. Click "Scan me" when ready.';
+            this.startScanCountdown();
         } catch (error) {
             msg.textContent = `Camera error: ${error.message}`;
         }
     }
 
     stopCamera() {
+        if (this.scanTimerId) {
+            clearTimeout(this.scanTimerId);
+            this.scanTimerId = null;
+        }
+        if (this.scanIntervalId) {
+            clearInterval(this.scanIntervalId);
+            this.scanIntervalId = null;
+        }
         if (this.cameraStream) {
             this.cameraStream.getTracks().forEach(t => t.stop());
             this.cameraStream = null;
@@ -583,6 +782,11 @@ class TaskManager {
         const video = document.getElementById('videoFeed');
         const canvas = document.getElementById('captureCanvas');
         const ctx = canvas.getContext('2d');
+
+        if (!video.videoWidth || !video.videoHeight) {
+            this.showEmotionResult(this.getMockEmotion());
+            return;
+        }
 
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -629,25 +833,34 @@ class TaskManager {
             neutral: 'You\'re neutral. Ready for any task.',
         };
 
-        this.currentEmotion = result.emotion;
+        this.pendingEmotionResult = result;
 
         document.getElementById('resultIcon').textContent = icons[result.emotion];
         document.getElementById('resultEmotion').textContent = result.emotion;
         document.getElementById('resultConfidence').textContent = Math.round(result.confidence * 100);
         document.getElementById('resultMessage').textContent = messages[result.emotion];
 
-        // Show emotion badge
-        const badge = document.getElementById('emotionBadge');
-        document.getElementById('emotionIcon').textContent = icons[result.emotion];
-        document.getElementById('emotionLabel').textContent = result.emotion;
-        badge.style.display = 'flex';
-
         // Show result modal
         document.getElementById('resultModal').classList.add('show');
         document.getElementById('modalOverlay').classList.add('show');
     }
 
+    applyEmotionToTasks() {
+        if (!this.pendingEmotionResult) return;
+
+        this.currentEmotion = this.pendingEmotionResult.emotion;
+        const icons = { focused: '🎯', stressed: '😰', neutral: '😐' };
+        const badge = document.getElementById('emotionBadge');
+        document.getElementById('emotionIcon').textContent = icons[this.currentEmotion] || '😐';
+        document.getElementById('emotionLabel').textContent = this.currentEmotion;
+        badge.style.display = 'flex';
+
+        this.renderTasks();
+        this.closeResult();
+    }
+
     closeResult() {
+        this.pendingEmotionResult = null;
         document.getElementById('resultModal').classList.remove('show');
         document.getElementById('modalOverlay').classList.remove('show');
     }
@@ -655,6 +868,38 @@ class TaskManager {
     clearEmotion() {
         this.currentEmotion = null;
         document.getElementById('emotionBadge').style.display = 'none';
+        this.renderTasks();
+    }
+
+    async ensureEmotionConsent() {
+        if (this.emotionScanEnabled) return true;
+
+        const consent = confirm(
+            'Emotion scan consent:\n\n1) Camera runs once for 5 seconds only.\n2) One frame is analyzed for task support, not diagnosis.\n3) You can dismiss and keep manual priorities.\n4) Raw camera image is not stored in database.\n\nDo you agree?'
+        );
+
+        if (consent) {
+            this.emotionScanEnabled = true;
+            return true;
+        }
+        return false;
+    }
+
+    startScanCountdown() {
+        const msg = document.getElementById('cameraMessage');
+        let remaining = 5;
+        msg.textContent = `Scanning in ${remaining}s... Keep your face in frame.`;
+
+        this.scanIntervalId = setInterval(() => {
+            remaining -= 1;
+            if (remaining > 0) {
+                msg.textContent = `Scanning in ${remaining}s... Keep your face in frame.`;
+            }
+        }, 1000);
+
+        this.scanTimerId = setTimeout(() => {
+            this.analyzeEmotion();
+        }, 5000);
     }
 
     /* ============================================
@@ -664,13 +909,17 @@ class TaskManager {
     setupEventListeners() {
         // Add task
         const input = document.getElementById('taskInput');
+        const dueInput = document.getElementById('taskDueInput');
         input.addEventListener('keypress', async (e) => {
             if (e.key === 'Enter' && input.value.trim()) {
-                const task = await this.createTask(input.value);
+                const dueAtLocal = dueInput?.value || null;
+                const task = await this.createTask(input.value, dueAtLocal);
                 if (task) {
                     this.tasks.unshift(task);
                     this.renderTasks();
                     input.value = '';
+                    if (dueInput) dueInput.value = '';
+                    this.generateCalendar();
                 }
             }
         });
@@ -725,6 +974,10 @@ class TaskManager {
             document.getElementById('sidebarRight').classList.remove('visible');
         });
 
+        document.getElementById('saveProfileBtn')?.addEventListener('click', () => {
+            this.saveUserProfile();
+        });
+
         // Emotion scan
         document.getElementById('emotionScanBtn').addEventListener('click', () => {
             this.openCamera();
@@ -737,6 +990,9 @@ class TaskManager {
 
         // Result modal
         document.getElementById('closeResult').addEventListener('click', () => this.closeResult());
+        document.getElementById('rejectEmotion').addEventListener('click', () => this.closeResult());
+        document.getElementById('applyEmotion').addEventListener('click', () => this.applyEmotionToTasks());
+
         // Emotion badge
         document.getElementById('clearEmotionBtn').addEventListener('click', () => this.clearEmotion());
 
@@ -765,3 +1021,5 @@ class TaskManager {
 document.addEventListener('DOMContentLoaded', () => {
     new TaskManager();
 });
+
+

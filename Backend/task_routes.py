@@ -4,7 +4,7 @@ Task management routes for the API
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 from database import db
-from models import Task, EmotionLog
+from models import Task, EmotionLog, User
 from modules.emotion import detect_emotion_from_image, get_emotion_icon
 from notifications import send_email, send_sms
 
@@ -202,21 +202,24 @@ def dispatch_reminders():
 
     sent = 0
     for task in due:
-        method = (task.reminder_method or 'email').lower()
+        user = User.query.filter_by(email=task.user_id).first()
+        account_preference = (user.notification_preference if user and user.notification_preference else 'email').lower()
+        method = (task.reminder_method or account_preference or 'email').lower()
         subject = f"Task Reminder: {task.title}"
         body = f"Reminder for task: {task.title}"
 
-        ok_email = True
-        ok_sms = True
+        ok_email = False
+        ok_sms = False
 
         if method in ['email', 'both']:
-            to_email = user_id if '@' in user_id else data.get('email')
+            to_email = user.email if user else (user_id if '@' in user_id else data.get('email'))
             if to_email:
                 ok_email = send_email(to_email, subject, body)
 
         if method in ['sms', 'both']:
-            if task.reminder_phone:
-                ok_sms = send_sms(task.reminder_phone, body)
+            phone = task.reminder_phone or (user.phone if user else None)
+            if phone:
+                ok_sms = send_sms(phone, body)
             else:
                 ok_sms = False
 

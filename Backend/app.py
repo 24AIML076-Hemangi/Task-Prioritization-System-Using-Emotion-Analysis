@@ -1,8 +1,10 @@
 from flask import Flask
+from flask import redirect
 from flask_cors import CORS
 import os
 import sys
 from sqlalchemy import inspect, text
+from dotenv import load_dotenv
 
 # Add parent directory to path so we can import API module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -11,8 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import db
 from models import User, Task, EmotionLog
 
+# Resolve frontend directory and serve it from Flask so one server can host API + UI
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+frontend_dir = os.path.join(project_root, "Frontend")
+load_dotenv(os.path.join(project_root, ".env"))
+
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 
 # SQLite Database Configuration
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -33,10 +40,27 @@ from task_routes import task_bp
 app.register_blueprint(auth_bp)
 app.register_blueprint(task_bp)
 
+
+@app.route('/')
+def home():
+    return redirect('/login.html')
+
 # Create database tables on startup
 with app.app_context():
     db.create_all()
     inspector = inspect(db.engine)
+    if 'users' in inspector.get_table_names():
+        user_columns = {c['name'] for c in inspector.get_columns('users')}
+        user_alters = []
+        if 'phone' not in user_columns:
+            user_alters.append("ALTER TABLE users ADD COLUMN phone VARCHAR(30)")
+        if 'notification_preference' not in user_columns:
+            user_alters.append("ALTER TABLE users ADD COLUMN notification_preference VARCHAR(20) DEFAULT 'email'")
+        for stmt in user_alters:
+            db.session.execute(text(stmt))
+        if user_alters:
+            db.session.commit()
+
     if 'tasks' in inspector.get_table_names():
         columns = {c['name'] for c in inspector.get_columns('tasks')}
         alters = []

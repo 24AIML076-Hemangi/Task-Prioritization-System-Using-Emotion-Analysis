@@ -13,6 +13,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    phone = db.Column(db.String(30), nullable=True)
+    notification_preference = db.Column(db.String(20), default='email')  # 'email' | 'sms' | 'both'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -29,6 +31,8 @@ class User(db.Model):
         return {
             'id': self.id,
             'email': self.email,
+            'phone': self.phone,
+            'notification_preference': self.notification_preference,
             'created_at': self.created_at.isoformat()
         }
     

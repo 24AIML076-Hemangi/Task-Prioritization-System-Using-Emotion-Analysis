@@ -71,6 +71,8 @@ def signup():
     data = request.get_json() or {}
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
+    phone = data.get("phone", "").strip() or None
+    notification_preference = (data.get("notification_preference", "email") or "email").strip().lower()
 
     if not email or not password:
         return jsonify({"error": "Email and password required"}), 400
@@ -81,13 +83,16 @@ def signup():
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters"}), 400
 
+    if notification_preference not in ["email", "sms", "both"]:
+        return jsonify({"error": "Invalid notification preference"}), 400
+
     # Check if user already exists
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
         return jsonify({"error": "Email already registered"}), 400
 
     # Create new user
-    new_user = User(email=email)
+    new_user = User(email=email, phone=phone, notification_preference=notification_preference)
     new_user.set_password(password)
     
     db.session.add(new_user)
@@ -117,6 +122,45 @@ def login():
         "message": "Login successful",
         "user": user.to_dict()
     }), 200
+
+
+@auth_bp.route("/profile", methods=["GET"])
+@cross_origin()
+def get_profile():
+    email = (request.args.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "email is required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    return jsonify(user.to_dict()), 200
+
+
+@auth_bp.route("/profile", methods=["PUT"])
+@cross_origin()
+def update_profile():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "email is required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if "phone" in data:
+        user.phone = (data.get("phone") or "").strip() or None
+
+    if "notification_preference" in data:
+        preference = (data.get("notification_preference") or "email").strip().lower()
+        if preference not in ["email", "sms", "both"]:
+            return jsonify({"error": "Invalid notification preference"}), 400
+        user.notification_preference = preference
+
+    db.session.commit()
+    return jsonify(user.to_dict()), 200
 
 
 @auth_bp.route("/forgot-password", methods=["POST"])

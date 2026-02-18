@@ -6,3 +6,4 @@ sample_data.csv
 
 Data_Storage/tasks.db
 Data_Storage/*.csv
+.env

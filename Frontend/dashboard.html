@@ -71,13 +71,21 @@
         <main class="main-content" id="mainContent">
             <!-- Quick Add Task -->
             <section class="task-adder">
-                <input
-                    type="text"
-                    id="taskInput"
-                    class="task-input"
-                    placeholder="Add a task... (press Enter)"
-                    autocomplete="off"
-                />
+                <div class="task-adder-row">
+                    <input
+                        type="text"
+                        id="taskInput"
+                        class="task-input"
+                        placeholder="Add a task... (press Enter)"
+                        autocomplete="off"
+                    />
+                    <input
+                        type="datetime-local"
+                        id="taskDueInput"
+                        class="task-due-input"
+                        title="Deadline date and time"
+                    />
+                </div>
             </section>
 
             <!-- Current View Label -->
@@ -123,6 +131,25 @@
                 <button class="btn-clear-filter" id="clearDateFilter">Clear Filter</button>
             </div>
 
+            <div class="task-details-panel">
+                <h3>Notification Settings</h3>
+                <div class="detail-form">
+                    <label>Default channel</label>
+                    <select id="profileNotificationMethod">
+                        <option value="email">Email</option>
+                        <option value="sms">SMS</option>
+                        <option value="both">Email + SMS</option>
+                    </select>
+
+                    <label>Phone (for SMS)</label>
+                    <input type="tel" id="profilePhone" placeholder="+1..." />
+
+                    <div class="detail-actions">
+                        <button class="btn-primary" id="saveProfileBtn">Save Profile</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Task Details (shown when task is selected) -->
             <div class="task-details-panel" id="taskDetailsPanel" style="display: none;">
                 <h3>Task Details</h3>
@@ -145,10 +172,11 @@
             <video id="videoFeed" class="video" playsinline></video>
             <canvas id="captureCanvas" style="display: none;"></canvas>
             <p class="status-text" id="cameraMessage">Initializing camera...</p>
+            <p class="status-text" style="font-size:12px; opacity:0.8;">5-second one-time scan. Optional. Not a mental health diagnosis.</p>
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" id="cancelCamera">Cancel</button>
-            <button class="btn-primary" id="captureImage">Analyze</button>
+            <button class="btn-primary" id="captureImage">Analyze Now</button>
         </div>
     </div>
 
@@ -173,3 +201,5 @@
     <script src="dashboard-script.js"></script>
 </body>
 </html>
+
+

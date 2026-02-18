@@ -4,6 +4,8 @@ document.getElementById('signupForm').addEventListener('submit', function(e) {
     const fullname = document.getElementById('fullname').value.trim();
     const email = document.getElementById('email').value.trim();
     const username = document.getElementById('username').value.trim();
+    const phone = document.getElementById('phone').value.trim();
+    const notificationPreference = document.getElementById('notificationPreference').value;
     const password = document.getElementById('password').value;
     const confirmPassword = document.getElementById('confirmPassword').value;
     const terms = document.getElementById('terms').checked;
@@ -73,9 +75,14 @@ document.getElementById('signupForm').addEventListener('submit', function(e) {
         showError('termsError', 'You must agree to the terms');
         isValid = false;
     }
+
+    if ((notificationPreference === 'sms' || notificationPreference === 'both') && !phone) {
+        showError('phoneError', 'Phone is required for SMS reminders');
+        isValid = false;
+    }
     
     if (isValid) {
-        submitSignup(fullname, email, username, password);
+        submitSignup(fullname, email, username, phone, notificationPreference, password);
     }
 });
 
@@ -113,13 +120,13 @@ function clearAllErrors() {
         el.textContent = '';
     });
     
-    const inputElements = document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"]');
+    const inputElements = document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"], input[type="tel"], select');
     inputElements.forEach(el => {
         el.classList.remove('error', 'success');
     });
 }
 
-function submitSignup(fullname, email, username, password) {
+function submitSignup(fullname, email, username, phone, notificationPreference, password) {
     const successMessage = document.getElementById('successMessage');
     const signupBtn = document.querySelector('.signup-btn');
     
@@ -135,7 +142,9 @@ function submitSignup(fullname, email, username, password) {
         },
         body: JSON.stringify({
             email: email,
-            password: password
+            password: password,
+            phone: phone || null,
+            notification_preference: notificationPreference || 'email'
         })
     })
     .then(response => response.json())

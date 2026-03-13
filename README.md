@@ -12,17 +12,19 @@ A full-stack task management app that combines manual prioritization (Eisenhower
 ## ⚡ Features
 
 - User Authentication: Signup, login, profile update, forgot/reset password 🔑
-- Task CRUD: Create, read, update, delete tasks with SQLite persistence 💾
+- JWT Authentication: Access + refresh token flow for protected APIs 🔐
+- Task CRUD: Create, read, update, delete tasks with PostgreSQL persistence 💾
 - Priority Fields: `importance` and `urgency` 🏷️
 - Emotion Scan: Optional endpoint for assistive reprioritization 🎭
 - Reminder Scheduling: `due_at`, `reminder_at`, delivery method, phone number ⏰📱
 - Reminder Dispatch: Email/SMS integrations (SendGrid/Twilio or SMTP/Twilio), with safe mock fallback 🚨
+- Daily Reminder Sweep: APScheduler can dispatch reminders on schedule 📅
 
 ## 🛠️ Tech Stack
 
 - Frontend: HTML, CSS, Vanilla JavaScript 🌐
 - Backend: Flask, Flask-SQLAlchemy, Flask-CORS 🔧
-- Database: SQLite 🗄️
+- Database: PostgreSQL (with SQLite migration support) 🗄️
 - Optional AI and Notifications: DeepFace, TensorFlow, Twilio, SendGrid 🤖💌
 
 ## 📂 Project Structure
@@ -67,9 +69,29 @@ pip install -r Backend/requirements.txt
 python Backend/app.py
 ```
 
+### SQLite -> PostgreSQL migration
+
+If you already have data in `Backend/tasks.db`, migrate it to PostgreSQL:
+
+```bash
+python Backend/migrate_sqlite_to_postgres.py --sqlite Backend/tasks.db --postgres "postgresql+psycopg2://postgres:password@localhost:5432/task_prioritization"
+```
+
+You can also keep auto-sync enabled on startup with:
+
+- `SQLITE_MIGRATE_ON_STARTUP=1`
+- `SQLITE_SOURCE_DB=Backend/tasks.db`
+
 5. Open the app in your browser:
 
 - `http://localhost:5000/login.html`
+
+## 🔐 JWT Flow
+
+1. `POST /api/auth/login` returns `access_token` and `refresh_token`.
+2. Frontend sends `Authorization: Bearer <access_token>` for protected routes.
+3. If access token expires, call `POST /api/auth/refresh` with refresh token.
+4. Task and profile routes use JWT identity (no manual `user_id` in API calls).
 
 ## 🌐 API Summary
 
@@ -81,12 +103,19 @@ Auth:
 - `/api/auth/verify-reset-code`
 - `/api/auth/reset-password`
 - `/api/auth/profile`
+- `/api/auth/refresh`
+- `/api/auth/google-mail/status`
+- `/api/auth/google-mail/start`
+- `/api/auth/google-mail/callback`
+- `/api/auth/google-mail/disconnect`
 
 Tasks:
 
 - `/api/tasks` (GET, POST)
 - `/api/tasks/<id>` (PUT, DELETE)
 - `/api/tasks/<id>/complete` (PATCH)
+
+All task routes are JWT-protected.
 
 Emotion:
 
@@ -96,10 +125,12 @@ Emotion:
 Reminders:
 
 - `/api/tasks/reminders/dispatch` 📩
+- `/api/auth/sms/test` (JWT, sends test SMS to profile phone or provided phone)
 
 ## 📝 Notes
 
 - Database schema is auto-created/migrated at backend startup ⚡
+- SMS phone format must be E.164 (example: `+14155551234`)
 - Intended for learning/demo usage. Can be productionized with:
 - Stronger auth/session controls 🔒
 - Migration tooling 🛠️

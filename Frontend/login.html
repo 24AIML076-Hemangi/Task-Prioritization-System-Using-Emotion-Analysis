@@ -8,9 +8,16 @@
     <link rel="stylesheet" href="login-style.css" />
   </head>
   <body>
+    <div class="app-splash" id="appSplash" aria-hidden="true">
+      <div class="splash-card">
+        <img class="splash-logo" src="logo.png" alt="Task Prioritization System logo" />
+        <div class="splash-title">TaskPrioritize</div>
+        <div class="splash-sub">Using Emotion Analysis</div>
+      </div>
+    </div>
     <header class="login-topbar">
       <div class="brand">
-        <div class="logo-circle">TP</div>
+        <img class="brand-logo" src="logo.png" alt="Task Prioritization System logo" />
         TaskPrioritize
       </div>
     </header>
@@ -67,5 +74,15 @@
     </main>
 
     <script src="login-script.js" defer></script>
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        const splash = document.getElementById('appSplash');
+        if (!splash) return;
+        setTimeout(() => {
+          splash.classList.add('hide');
+          setTimeout(() => splash.remove(), 400);
+        }, 1200);
+      });
+    </script>
   </body>
 </html>

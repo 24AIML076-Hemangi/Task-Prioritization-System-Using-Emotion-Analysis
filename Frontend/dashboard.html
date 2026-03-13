@@ -7,21 +7,31 @@
     <link rel="stylesheet" href="dashboard-style.css">
 </head>
 <body>
+    <div class="app-splash" id="appSplash" aria-hidden="true">
+        <div class="splash-card">
+            <img class="splash-logo" src="logo.png" alt="Task Prioritization System logo" />
+            <div class="splash-title">TaskPrioritize</div>
+            <div class="splash-sub">Using Emotion Analysis</div>
+        </div>
+    </div>
     <!-- Top Navigation -->
     <header class="navbar">
         <div class="navbar-content">
             <div class="navbar-brand">
-                <div class="logo">TP</div>
+                <img class="navbar-logo" src="logo.png" alt="Task Prioritization System logo" />
                 <h1>TaskPrioritize</h1>
             </div>
 
             <div class="navbar-actions">
                 <button class="btn-emotion-scan" id="emotionScanBtn" title="Scan your emotion">
-                    📷
+                    Scan
+                </button>
+                <button class="btn-theme" id="themeToggle" title="Toggle theme">
+                    Theme: <span id="themeLabel">Light</span>
                 </button>
                 <span class="user-name" id="userInfo">User</span>
                 <button class="btn-logout" id="logoutBtn" title="Logout">
-                    ⎋
+                    Logout
                 </button>
             </div>
         </div>
@@ -91,15 +101,37 @@
             <!-- Current View Label -->
             <div class="view-header">
                 <h2 id="viewTitle">Today</h2>
-                <span class="task-count" id="taskCount">0 tasks</span>
+                <div class="view-actions">
+                    <span class="task-count" id="taskCount">0 tasks</span>
+                    <select id="matrixSelect" class="matrix-select" title="Choose prioritization matrix">
+                        <option value="eisenhower">Eisenhower (Importance/Urgency)</option>
+                        <option value="impact-effort">Impact vs Effort</option>
+                        <option value="moscow">MoSCoW (Must/Should/Could/Won't)</option>
+                    </select>
+                </div>
             </div>
 
             <!-- Emotion Status Badge (if emotion scan active) -->
             <div class="emotion-badge" id="emotionBadge" style="display: none;">
                 <span id="emotionIcon"></span>
                 <span id="emotionLabel"></span>
-                <button class="badge-close" id="clearEmotionBtn">×</button>
+                <button class="badge-close" id="clearEmotionBtn">X</button>
             </div>
+
+            <section class="recommended-panel" id="recommendedSection" style="display: none;">
+                <div class="recommended-header">
+                    <h3>Recommended for You</h3>
+                    <span class="recommended-subtitle">Based on current emotion</span>
+                </div>
+                <p class="recommended-hint" id="recommendedHint"></p>
+                <ol id="recommendedList"></ol>
+                <div class="feedback-row">
+                    <span>Was this helpful?</span>
+                    <button class="btn-secondary btn-feedback" id="feedbackYes">Yes</button>
+                    <button class="btn-secondary btn-feedback" id="feedbackNo">No</button>
+                    <span class="feedback-status" id="feedbackStatus"></span>
+                </div>
+            </section>
 
             <!-- Task List - Grouped by Date -->
             <section class="tasks-list">
@@ -142,10 +174,27 @@
                     </select>
 
                     <label>Phone (for SMS)</label>
-                    <input type="tel" id="profilePhone" placeholder="+1..." />
+                    <select id="profilePhoneCountry">
+                        <option value="+91" selected>India (+91)</option>
+                        <option value="+1">USA (+1)</option>
+                        <option value="+86">China (+86)</option>
+                    </select>
+                    <input type="tel" id="profilePhone" placeholder="10-digit number" />
 
                     <div class="detail-actions">
                         <button class="btn-primary" id="saveProfileBtn">Save Profile</button>
+                        <button class="btn-secondary" id="sendTestSmsBtn">Send Test SMS</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="task-details-panel">
+                <h3>Gmail Sender</h3>
+                <div class="detail-form">
+                    <div id="profileGmailStatus">Checking Gmail connection...</div>
+                    <div class="detail-actions">
+                        <button class="btn-primary" id="connectGmailBtn">Connect Gmail</button>
+                        <button class="btn-secondary" id="disconnectGmailBtn">Disconnect</button>
                     </div>
                 </div>
             </div>
@@ -199,7 +248,19 @@
     </div>
 
     <script src="dashboard-script.js"></script>
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            const splash = document.getElementById('appSplash');
+            if (!splash) return;
+            setTimeout(() => {
+                splash.classList.add('hide');
+                setTimeout(() => splash.remove(), 400);
+            }, 1200);
+        });
+    </script>
 </body>
 </html>
+
+
 
 

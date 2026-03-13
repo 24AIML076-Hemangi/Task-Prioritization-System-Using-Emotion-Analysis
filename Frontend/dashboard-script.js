@@ -22,23 +22,29 @@ class TaskManager {
         this.scanIntervalId = null;
         this.pendingEmotionResult = null;
         this.emotionScanEnabled = false;
+        this.googleMailStatus = null;
+        this.googlePopupPoller = null;
+        this.matrixType = this.loadMatrixType();
+        this.themeMode = this.loadTheme();
 
         this.init();
     }
 
     async init() {
         // Check login
-        if (!localStorage.getItem('isLoggedIn')) {
+        if (!localStorage.getItem('isLoggedIn') || !localStorage.getItem('accessToken')) {
             window.location.href = 'login.html';
             return;
         }
 
-        // Use email as user_id for API calls (unique identifier)
+        // Keep email locally for UI display; API identity now comes from JWT
         this.userId = localStorage.getItem('userEmail') || localStorage.getItem('userName') || 'User';
         const userName = localStorage.getItem('userName') || 'User';
         document.getElementById('userInfo').textContent = userName;
+        this.applyTheme();
 
         await this.loadUserProfile();
+        await this.loadGoogleMailStatus();
         await this.loadTasks();
         this.setupEventListeners();
         this.generateCalendar();
@@ -47,28 +53,105 @@ class TaskManager {
         this.startAutoRefresh();
     }
 
+    getAuthHeaders(extra = {}) {
+        const token = localStorage.getItem('accessToken');
+        const headers = { ...extra };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        return headers;
+    }
+
+    async refreshAccessToken() {
+        const refreshToken = localStorage.getItem('refreshToken');
+        if (!refreshToken) return false;
+
+        const res = await fetch(`${this.authApiUrl}/refresh`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${refreshToken}`,
+            },
+        });
+
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (!data.access_token) return false;
+        localStorage.setItem('accessToken', data.access_token);
+        return true;
+    }
+
+    async apiFetch(url, options = {}, retried = false) {
+        const headers = this.getAuthHeaders(options.headers || {});
+        const response = await fetch(url, { ...options, headers });
+
+        if (response.status !== 401 || retried) {
+            return response;
+        }
+
+        const refreshed = await this.refreshAccessToken();
+        if (!refreshed) {
+            localStorage.removeItem('isLoggedIn');
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('userEmail');
+            localStorage.removeItem('userName');
+            window.location.href = 'login.html';
+            return response;
+        }
+
+        const retryHeaders = this.getAuthHeaders(options.headers || {});
+        return fetch(url, { ...options, headers: retryHeaders });
+    }
+
+    loadMatrixType() {
+        return localStorage.getItem('matrixType') || 'eisenhower';
+    }
+
+    saveMatrixType(type) {
+        localStorage.setItem('matrixType', type);
+    }
+
+    loadTheme() {
+        return localStorage.getItem('themeMode') || 'light';
+    }
+
+    applyTheme() {
+        const mode = this.themeMode === 'dark' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', mode);
+        const label = document.getElementById('themeLabel');
+        if (label) {
+            label.textContent = mode === 'dark' ? 'Dark' : 'Light';
+        }
+    }
+
+    toggleTheme() {
+        this.themeMode = this.themeMode === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('themeMode', this.themeMode);
+        this.applyTheme();
+    }
+
     /* ============================================
        DATA - Load & Save
        ============================================ */
 
     async loadTasks() {
+        const previousTasks = this.tasks;
         try {
-            const response = await fetch(`${this.apiUrl}?user_id=${this.userId}`);
+            const response = await this.apiFetch(this.apiUrl);
             if (response.ok) {
                 this.tasks = await response.json();
             } else {
-                this.tasks = [];
+                console.warn(`Task load failed with status ${response.status}; keeping previous task list.`);
+                this.tasks = previousTasks;
             }
         } catch (error) {
             console.error('Load error:', error);
-            this.tasks = [];
+            this.tasks = previousTasks;
         }
     }
 
     async createTask(title, dueAtLocal = null) {
         try {
             const payload = {
-                user_id: this.userId,
                 title: title.trim(),
                 importance: 'not-important',
                 urgency: 'not-urgent',
@@ -77,7 +160,7 @@ class TaskManager {
             
             console.log('📝 Creating task:', payload);
             
-            const response = await fetch(this.apiUrl, {
+            const response = await this.apiFetch(this.apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -100,7 +183,7 @@ class TaskManager {
 
     async deleteTask(id) {
         try {
-            await fetch(`${this.apiUrl}/${id}`, { method: 'DELETE' });
+            await this.apiFetch(`${this.apiUrl}/${id}`, { method: 'DELETE' });
             this.tasks = this.tasks.filter(t => t.id !== id);
             if (this.taskLists[id]) {
                 delete this.taskLists[id];
@@ -115,7 +198,7 @@ class TaskManager {
 
     async loadUserProfile() {
         try {
-            const response = await fetch(`${this.authApiUrl}/profile?email=${encodeURIComponent(this.userId)}`);
+            const response = await this.apiFetch(`${this.authApiUrl}/profile`);
             if (!response.ok) return;
             this.userProfile = await response.json();
             this.populateProfileForm();
@@ -124,28 +207,176 @@ class TaskManager {
         }
     }
 
+    async loadGoogleMailStatus() {
+        try {
+            const response = await this.apiFetch(`${this.authApiUrl}/google-mail/status`);
+            if (!response.ok) {
+                this.googleMailStatus = null;
+                this.renderGoogleMailStatus();
+                return;
+            }
+            this.googleMailStatus = await response.json();
+            this.renderGoogleMailStatus();
+        } catch (error) {
+            console.error('Gmail status load error:', error);
+            this.googleMailStatus = null;
+            this.renderGoogleMailStatus();
+        }
+    }
+
+    renderGoogleMailStatus() {
+        const statusEl = document.getElementById('profileGmailStatus');
+        const connectBtn = document.getElementById('connectGmailBtn');
+        const disconnectBtn = document.getElementById('disconnectGmailBtn');
+        if (!statusEl || !connectBtn || !disconnectBtn) return;
+
+        if (!this.googleMailStatus) {
+            statusEl.textContent = 'Gmail status unavailable.';
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            return;
+        }
+
+        const configured = !!this.googleMailStatus.oauth_configured;
+        const connected = !!this.googleMailStatus.connected;
+        const gmailEmail = this.googleMailStatus.gmail_email || 'Unknown';
+
+        if (!configured) {
+            statusEl.textContent = 'Google OAuth not configured on server.';
+        } else if (connected) {
+            statusEl.textContent = `Connected: ${gmailEmail}`;
+        } else {
+            statusEl.textContent = 'Not connected. Connect once to send reminders from your Gmail.';
+        }
+
+        connectBtn.disabled = !configured || connected;
+        disconnectBtn.disabled = !connected;
+    }
+
+    async connectGmail() {
+        try {
+            const response = await this.apiFetch(`${this.authApiUrl}/google-mail/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                alert(data.error || 'Unable to start Gmail OAuth');
+                return;
+            }
+
+            const popup = window.open(data.auth_url, 'gmail_oauth', 'width=520,height=700');
+            if (!popup) {
+                alert('Popup blocked. Please allow popups and try again.');
+                return;
+            }
+
+            if (this.googlePopupPoller) clearInterval(this.googlePopupPoller);
+            this.googlePopupPoller = setInterval(async () => {
+                if (popup.closed) {
+                    clearInterval(this.googlePopupPoller);
+                    this.googlePopupPoller = null;
+                    await this.loadGoogleMailStatus();
+                }
+            }, 1000);
+        } catch (error) {
+            console.error('Gmail connect error:', error);
+            alert('Unable to connect Gmail right now.');
+        }
+    }
+
+    async disconnectGmail() {
+        try {
+            const response = await this.apiFetch(`${this.authApiUrl}/google-mail/disconnect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                alert(data.error || 'Unable to disconnect Gmail');
+                return;
+            }
+            await this.loadGoogleMailStatus();
+        } catch (error) {
+            console.error('Gmail disconnect error:', error);
+            alert('Unable to disconnect Gmail right now.');
+        }
+    }
+
+    splitPhoneForDisplay(phone) {
+        const knownCodes = ['+91', '+1', '+86'];
+        const raw = (phone || '').trim();
+        if (!raw) {
+            return { countryCode: '+91', localNumber: '' };
+        }
+        for (const code of knownCodes) {
+            if (raw.startsWith(code)) {
+                return {
+                    countryCode: code,
+                    localNumber: raw.slice(code.length).replace(/\D/g, ''),
+                };
+            }
+        }
+        return {
+            countryCode: '+91',
+            localNumber: raw.replace(/\D/g, ''),
+        };
+    }
+
+    composeE164Phone(localOrE164, countryCode = '+91') {
+        const raw = (localOrE164 || '').trim();
+        if (!raw) return null;
+
+        let candidate = '';
+        if (raw.startsWith('+')) {
+            candidate = `+${raw.slice(1).replace(/\D/g, '')}`;
+        } else {
+            const digits = raw.replace(/\D/g, '');
+            candidate = `${countryCode}${digits}`;
+        }
+
+        return /^\+[1-9]\d{7,14}$/.test(candidate) ? candidate : null;
+    }
+
     populateProfileForm() {
         const methodEl = document.getElementById('profileNotificationMethod');
+        const countryEl = document.getElementById('profilePhoneCountry');
         const phoneEl = document.getElementById('profilePhone');
-        if (!methodEl || !phoneEl || !this.userProfile) return;
+        if (!methodEl || !countryEl || !phoneEl || !this.userProfile) return;
 
         methodEl.value = this.userProfile.notification_preference || 'email';
-        phoneEl.value = this.userProfile.phone || '';
+        const split = this.splitPhoneForDisplay(this.userProfile.phone || '');
+        if ([...countryEl.options].some((opt) => opt.value === split.countryCode)) {
+            countryEl.value = split.countryCode;
+        } else {
+            countryEl.value = '+91';
+        }
+        phoneEl.value = split.localNumber;
     }
 
     async saveUserProfile() {
         const methodEl = document.getElementById('profileNotificationMethod');
+        const countryEl = document.getElementById('profilePhoneCountry');
         const phoneEl = document.getElementById('profilePhone');
-        if (!methodEl || !phoneEl) return;
+        if (!methodEl || !countryEl || !phoneEl) return;
+
+        const localPhone = phoneEl.value.trim();
+        const composedPhone = localPhone ? this.composeE164Phone(localPhone, countryEl.value || '+91') : null;
+        if (localPhone && !composedPhone) {
+            alert('Enter a valid phone number (digits only) with selected country code');
+            return;
+        }
 
         const payload = {
-            email: this.userId,
             notification_preference: methodEl.value || 'email',
-            phone: phoneEl.value.trim() || null,
+            phone: composedPhone,
+            phone_country: countryEl.value || '+91',
         };
 
         try {
-            const response = await fetch(`${this.authApiUrl}/profile`, {
+            const response = await this.apiFetch(`${this.authApiUrl}/profile`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -163,9 +394,41 @@ class TaskManager {
         }
     }
 
+    async sendTestSms() {
+        const countryEl = document.getElementById('profilePhoneCountry');
+        const phoneEl = document.getElementById('profilePhone');
+        const localPhone = (phoneEl?.value || '').trim();
+        if (!localPhone) {
+            alert('Enter phone number first');
+            return;
+        }
+        const phone = this.composeE164Phone(localPhone, countryEl?.value || '+91');
+        if (!phone) {
+            alert('Enter a valid phone number (digits only) with selected country code');
+            return;
+        }
+
+        try {
+            const response = await this.apiFetch(`${this.authApiUrl}/sms/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, phone_country: countryEl?.value || '+91' }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                alert(data.error || 'Failed to send test SMS');
+                return;
+            }
+            alert(`SMS sent to ${data.phone}`);
+        } catch (error) {
+            console.error('Test SMS error:', error);
+            alert('Unable to send test SMS right now');
+        }
+    }
+
     async toggleTask(id) {
         try {
-            const response = await fetch(`${this.apiUrl}/${id}/complete`, {
+            const response = await this.apiFetch(`${this.apiUrl}/${id}/complete`, {
                 method: 'PATCH',
             });
             if (response.ok) {
@@ -182,72 +445,75 @@ class TaskManager {
     /* ============================================
        UI - Render
        ============================================ */
-
-    renderTasks() {
+    async renderTasks() {
         const list = document.getElementById('tasksList');
         const count = document.getElementById('taskCount');
 
         let filtered = this.applyFilter(this.tasks);
 
-        // Filter by selected date if any
         if (this.selectedDate) {
-            filtered = filtered.filter(t => {
+            filtered = filtered.filter((t) => {
                 const d = this.getTaskReferenceDate(t);
                 if (!d) return false;
                 return this.getLocalDateKey(d) === this.selectedDate;
             });
         }
 
-        filtered = this.sortTasksForDisplay(filtered);
+        filtered = await this.sortTasksForDisplay(filtered);
 
-        // Separate completed and active
-        const active = filtered.filter(t => !t.completed);
-        const completed = filtered.filter(t => t.completed);
+        const active = filtered.filter((t) => !t.completed);
+        const completed = filtered.filter((t) => t.completed);
+        const recommendedIds = new Set(this.getRecommendedTaskIds(active));
 
-        console.log(`📊 Rendering tasks: ${active.length} active, ${completed.length} completed`);
         count.textContent = `${active.length} tasks`;
 
         if (active.length === 0 && completed.length === 0) {
-            list.innerHTML = '<div class="empty-state"><p>📋 No tasks. Add one to get started!</p></div>';
+            list.innerHTML = '<div class="empty-state"><p>No tasks. Add one to get started.</p></div>';
+            this.renderRecommendedSection([]);
             return;
         }
 
         let html = '';
-
-        // Active first
-        active.forEach(task => {
-            html += this.renderTaskItem(task);
+        active.forEach((task) => {
+            html += this.renderTaskItem(task, recommendedIds.has(task.id));
         });
 
-        // Completed after
         if (completed.length > 0) {
             html += '<div style="opacity:0.5">';
-            completed.forEach(task => {
-                html += this.renderTaskItem(task);
+            completed.forEach((task) => {
+                html += this.renderTaskItem(task, false);
             });
             html += '</div>';
         }
 
-        console.log('🎨 HTML to render:', html.substring(0, 200) + '...');
         list.innerHTML = html;
+        this.renderRecommendedSection(active);
+        this.applyMatrixLabels();
         this.attachListeners();
     }
 
-    renderTaskItem(task) {
+    renderTaskItem(task, isRecommended = false) {
         const text = task.title || task.text;
         const matrix = this.getMatrixClass(task);
         const checked = task.completed ? 'checked' : '';
         const list = this.getTaskList(task.id);
         const dueMeta = this.formatDueMeta(task);
+        const splitHint = this.currentEmotion === 'stressed' && (text || '').length >= 40
+            ? '<span class="task-meta hint">Split into subtasks</span>'
+            : '';
+        const recommendedClass = isRecommended ? 'emotion-suggested' : '';
+        const recommendedBadge = isRecommended ? '<span class="task-meta recommended-tag">Recommended</span>' : '';
 
         return `
-            <div class="task-item ${task.completed ? 'completed' : ''} ${matrix}" data-id="${task.id}">
+            <div class="task-item ${task.completed ? 'completed' : ''} ${matrix} ${recommendedClass}" data-id="${task.id}">
                 <input type="checkbox" class="task-checkbox" ${checked} />
                 <div class="task-main">
                     <span class="task-name">${this.escape(text)}</span>
                     ${dueMeta ? `<span class="task-meta ${dueMeta.overdue ? 'overdue' : ''}">${this.escape(dueMeta.label)}</span>` : ''}
+                    ${recommendedBadge}
+                    ${splitHint}
                 </div>
-                
+
                 <div class="task-controls">
                     <select class="task-list" data-id="${task.id}" title="Set list">
                         <option value="inbox" ${list === 'inbox' ? 'selected' : ''}>Inbox</option>
@@ -257,23 +523,77 @@ class TaskManager {
                     </select>
 
                     <select class="task-importance" data-id="${task.id}" title="Set importance">
-                        <option value="important" ${task.importance === 'important' ? 'selected' : ''}>⭐ Important</option>
-                        <option value="not-important" ${task.importance === 'not-important' ? 'selected' : ''}>☆ Not Important</option>
+                        <option value="important" ${task.importance === 'important' ? 'selected' : ''}>Important</option>
+                        <option value="not-important" ${task.importance === 'not-important' ? 'selected' : ''}>Not Important</option>
                     </select>
-                    
+
                     <select class="task-urgency" data-id="${task.id}" title="Set urgency">
-                        <option value="urgent" ${task.urgency === 'urgent' ? 'selected' : ''}>🚨 Urgent</option>
-                        <option value="not-urgent" ${task.urgency === 'not-urgent' ? 'selected' : ''}>◯ Not Urgent</option>
+                        <option value="urgent" ${task.urgency === 'urgent' ? 'selected' : ''}>Urgent</option>
+                        <option value="not-urgent" ${task.urgency === 'not-urgent' ? 'selected' : ''}>Not Urgent</option>
                     </select>
                 </div>
-                
+
                 <div class="task-actions">
-                    <button class="task-delete" data-id="${task.id}" title="Delete">
-                        ✕
-                    </button>
+                    <button class="task-delete" data-id="${task.id}" title="Delete">x</button>
                 </div>
             </div>
         `;
+    }
+
+    getRecommendedTaskIds(activeTasks) {
+        if (!this.currentEmotion) return [];
+        return (activeTasks || []).slice(0, 3).map((task) => task.id);
+    }
+
+    renderRecommendedSection(activeTasks) {
+        const section = document.getElementById('recommendedSection');
+        const list = document.getElementById('recommendedList');
+        const hint = document.getElementById('recommendedHint');
+        const status = document.getElementById('feedbackStatus');
+        if (!section || !list) return;
+
+        if (!this.currentEmotion || !activeTasks || activeTasks.length === 0) {
+            section.style.display = 'none';
+            list.innerHTML = '';
+            if (hint) hint.textContent = '';
+            if (status) status.textContent = '';
+            return;
+        }
+
+        const topThree = activeTasks.slice(0, 3);
+        section.style.display = topThree.length ? 'block' : 'none';
+        if (status) status.textContent = '';
+        if (hint) {
+            if (this.currentEmotion === 'stressed') {
+                hint.textContent = 'Keep tasks short and urgent. Reduce workload where possible.';
+            } else if (this.currentEmotion === 'focused') {
+                hint.textContent = 'Deep-work window. Prioritize complex, high-priority tasks.';
+            } else {
+                hint.textContent = 'Good time for routine planning and medium-priority tasks.';
+            }
+        }
+        list.innerHTML = topThree
+            .map((task, idx) => `<li>${idx + 1}. ${this.escape(task.title || '')}</li>`)
+            .join('');
+    }
+
+    recordRecommendationFeedback(helpful) {
+        const status = document.getElementById('feedbackStatus');
+        const payload = {
+            helpful: !!helpful,
+            emotion: this.currentEmotion || 'neutral',
+            ts: new Date().toISOString(),
+        };
+        try {
+            const existing = JSON.parse(localStorage.getItem('recommendationFeedback') || '[]');
+            existing.push(payload);
+            localStorage.setItem('recommendationFeedback', JSON.stringify(existing));
+        } catch {
+            // Ignore storage errors.
+        }
+        if (status) {
+            status.textContent = helpful ? 'Thanks for the feedback.' : 'Got it. We will adjust.';
+        }
     }
 
     getMatrixClass(task) {
@@ -283,6 +603,58 @@ class TaskManager {
         if (imp && !urg) return 'imp-nurg';
         if (!imp && urg) return 'nimp-urg';
         return 'nimp-nurg';
+    }
+
+    getMatrixLabels() {
+        if (this.matrixType === 'impact-effort') {
+            return {
+                importanceLabel: 'High Impact',
+                notImportanceLabel: 'Low Impact',
+                urgencyLabel: 'High Effort',
+                notUrgencyLabel: 'Low Effort',
+                importanceTitle: 'Set impact',
+                urgencyTitle: 'Set effort',
+            };
+        }
+        if (this.matrixType === 'moscow') {
+            return {
+                importanceLabel: 'Must',
+                notImportanceLabel: 'Should',
+                urgencyLabel: 'Could',
+                notUrgencyLabel: "Won't",
+                importanceTitle: 'Set must/should',
+                urgencyTitle: 'Set could/won’t',
+            };
+        }
+
+        return {
+            importanceLabel: 'Important',
+            notImportanceLabel: 'Not Important',
+            urgencyLabel: 'Urgent',
+            notUrgencyLabel: 'Not Urgent',
+            importanceTitle: 'Set importance',
+            urgencyTitle: 'Set urgency',
+        };
+    }
+
+    applyMatrixLabels() {
+        const labels = this.getMatrixLabels();
+
+        document.querySelectorAll('.task-importance').forEach(select => {
+            select.title = labels.importanceTitle;
+            const high = select.querySelector('option[value="important"]');
+            const low = select.querySelector('option[value="not-important"]');
+            if (high) high.textContent = labels.importanceLabel;
+            if (low) low.textContent = labels.notImportanceLabel;
+        });
+
+        document.querySelectorAll('.task-urgency').forEach(select => {
+            select.title = labels.urgencyTitle;
+            const high = select.querySelector('option[value="urgent"]');
+            const low = select.querySelector('option[value="not-urgent"]');
+            if (high) high.textContent = labels.urgencyLabel;
+            if (low) low.textContent = labels.notUrgencyLabel;
+        });
     }
 
     getTaskReferenceDate(task) {
@@ -390,7 +762,7 @@ class TaskManager {
             if (!task) return;
 
             const updateData = { [field]: value };
-            const response = await fetch(`${this.apiUrl}/${id}`, {
+            const response = await this.apiFetch(`${this.apiUrl}/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updateData),
@@ -466,7 +838,6 @@ class TaskManager {
                 return tasks;
         }
     }
-
     getMatrixRank(task) {
         const imp = task.importance === 'important';
         const urg = task.urgency === 'urgent';
@@ -476,22 +847,57 @@ class TaskManager {
         return 4;
     }
 
+    getEmotionPriorityRank(task) {
+        const imp = task.importance === 'important';
+        const urg = task.urgency === 'urgent';
+
+        // Deterministic, explainable rules for viva.
+        if (this.currentEmotion === 'stressed') {
+            // Short + urgent first; lower load before long tasks.
+            if (urg && !imp) return 1;
+            if (urg && imp) return 2;
+            if (!urg && !imp) return 3;
+            return 4;
+        }
+
+        if (this.currentEmotion === 'focused') {
+            // High-priority complex (important) first, then long-term work.
+            if (imp && urg) return 1;
+            if (imp && !urg) return 2;
+            if (!imp && urg) return 3;
+            return 4;
+        }
+
+        // Neutral: medium-priority and routine/organizing tasks first.
+        if ((imp && !urg) || (!imp && urg)) return 1;
+        if (!imp && !urg) return 2;
+        return 3;
+    }
+
     compareTaskEffort(a, b) {
         const aLen = (a.title || '').trim().length;
         const bLen = (b.title || '').trim().length;
 
-        if (this.currentEmotion === 'stressed') return aLen - bLen;
-        if (this.currentEmotion === 'focused') return bLen - aLen;
+        if (this.currentEmotion === 'stressed') {
+            return aLen - bLen;
+        }
+        if (this.currentEmotion === 'focused') {
+            return bLen - aLen;
+        }
 
         const aTime = new Date(a.created_at || 0).getTime();
         const bTime = new Date(b.created_at || 0).getTime();
         return aTime - bTime;
     }
 
-    sortTasksForDisplay(tasks) {
-        return [...tasks].sort((a, b) => {
-            const rankDiff = this.getMatrixRank(a) - this.getMatrixRank(b);
+    async sortTasksForDisplay(tasks) {
+        return [...(tasks || [])].sort((a, b) => {
+            const rankDiff = this.getEmotionPriorityRank(a) - this.getEmotionPriorityRank(b);
             if (rankDiff !== 0) return rankDiff;
+
+            const matrixDiff = this.getMatrixRank(a) - this.getMatrixRank(b);
+            if (matrixDiff !== 0) return matrixDiff;
+
             return this.compareTaskEffort(a, b);
         });
     }
@@ -506,7 +912,6 @@ class TaskManager {
         const dueValue = due ? this.toLocalInputValue(due) : '';
         const reminderValue = reminder ? this.toLocalInputValue(reminder) : '';
         const defaultMethod = task.reminder_method || (this.userProfile?.notification_preference || '');
-        const defaultPhone = task.reminder_phone || (this.userProfile?.phone || '');
 
         content.innerHTML = `
             <div class="detail-row">
@@ -528,9 +933,6 @@ class TaskManager {
                     <option value="both" ${defaultMethod === 'both' ? 'selected' : ''}>Email + SMS</option>
                 </select>
 
-                <label>Phone (for SMS)</label>
-                <input type="tel" id="detailPhone" placeholder="+1..." value="${defaultPhone}" />
-
                 <div class="detail-actions">
                     <button class="btn-secondary" id="detailClear">Clear</button>
                     <button class="btn-primary" id="detailSave">Save</button>
@@ -548,7 +950,6 @@ class TaskManager {
             document.getElementById('detailDue').value = '';
             document.getElementById('detailReminder').value = '';
             document.getElementById('detailMethod').value = '';
-            document.getElementById('detailPhone').value = '';
             this.updateTaskDetails(task.id, true);
         });
     }
@@ -560,13 +961,13 @@ class TaskManager {
         const dueRaw = document.getElementById('detailDue').value;
         const reminderRaw = document.getElementById('detailReminder').value;
         const method = document.getElementById('detailMethod').value;
-        const phone = document.getElementById('detailPhone').value.trim();
 
         const updateData = {
             due_at: dueRaw || null,
             reminder_at: reminderRaw || null,
             reminder_method: method || null,
-            reminder_phone: phone || null,
+            // Use the single profile phone source for SMS reminders.
+            reminder_phone: null,
         };
 
         if (clearAll) {
@@ -577,7 +978,7 @@ class TaskManager {
         }
 
         try {
-            const response = await fetch(`${this.apiUrl}/${id}`, {
+            const response = await this.apiFetch(`${this.apiUrl}/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updateData),
@@ -602,10 +1003,10 @@ class TaskManager {
     startReminderLoop() {
         const run = async () => {
             try {
-                const res = await fetch(`${this.apiUrl}/reminders/dispatch`, {
+                const res = await this.apiFetch(`${this.apiUrl}/reminders/dispatch`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_id: this.userId }),
+                    body: JSON.stringify({}),
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -741,6 +1142,8 @@ class TaskManager {
         const video = document.getElementById('videoFeed');
         const msg = document.getElementById('cameraMessage');
 
+        // Ensure any previous stream is fully closed before opening a new one.
+        this.stopCamera();
         modal.classList.add('show');
         document.getElementById('modalOverlay').classList.add('show');
         msg.textContent = 'Accessing camera...';
@@ -770,6 +1173,15 @@ class TaskManager {
             this.cameraStream.getTracks().forEach(t => t.stop());
             this.cameraStream = null;
         }
+        const video = document.getElementById('videoFeed');
+        if (video) {
+            const stream = video.srcObject;
+            if (stream && typeof stream.getTracks === 'function') {
+                stream.getTracks().forEach(t => t.stop());
+            }
+            video.pause();
+            video.srcObject = null;
+        }
     }
 
     closeCamera() {
@@ -796,10 +1208,10 @@ class TaskManager {
 
         try {
             // Try real API
-            const res = await fetch(`${this.apiUrl}/emotion-scan`, {
+            const res = await this.apiFetch(`${this.apiUrl}/emotion-scan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: base64, user_id: this.userId }),
+                body: JSON.stringify({ image: base64 }),
             });
             if (res.ok) {
                 const result = await res.json();
@@ -813,32 +1225,29 @@ class TaskManager {
         // Fallback to mock
         this.showEmotionResult(this.getMockEmotion());
     }
-
     getMockEmotion() {
-        const emotions = [
-            { emotion: 'focused', confidence: 0.85 },
-            { emotion: 'stressed', confidence: 0.72 },
-            { emotion: 'neutral', confidence: 0.88 },
-        ];
-        return emotions[Math.floor(Math.random() * emotions.length)];
+        return { emotion: 'neutral', confidence: 0.6 };
     }
 
     showEmotionResult(result) {
         this.closeCamera();
 
-        const icons = { focused: '🎯', stressed: '😰', neutral: '😐' };
+        const icons = { focused: '🎯', stressed: '😣', neutral: '😐' };
         const messages = {
-            focused: 'You\'re in focus mode! Tackle high-priority tasks.',
-            stressed: 'You\'re stressed. Start with easy tasks to build momentum.',
-            neutral: 'You\'re neutral. Ready for any task.',
+            focused: 'Focus mode: prioritize deep-work, long-term, high-complexity tasks.',
+            stressed: 'Stress mode: start with short urgent tasks and split large tasks into subtasks.',
+            neutral: 'Neutral mode: prioritize routine planning and medium-priority tasks.',
         };
 
-        this.pendingEmotionResult = result;
+        const safeEmotion = ['focused', 'stressed', 'neutral'].includes(result.emotion)
+            ? result.emotion
+            : 'neutral';
+        this.pendingEmotionResult = { ...result, emotion: safeEmotion };
 
-        document.getElementById('resultIcon').textContent = icons[result.emotion];
-        document.getElementById('resultEmotion').textContent = result.emotion;
-        document.getElementById('resultConfidence').textContent = Math.round(result.confidence * 100);
-        document.getElementById('resultMessage').textContent = messages[result.emotion];
+        document.getElementById('resultIcon').textContent = icons[safeEmotion];
+        document.getElementById('resultEmotion').textContent = safeEmotion;
+        document.getElementById('resultConfidence').textContent = Math.round((result.confidence || 0) * 100);
+        document.getElementById('resultMessage').textContent = messages[safeEmotion];
 
         // Show result modal
         document.getElementById('resultModal').classList.add('show');
@@ -849,9 +1258,9 @@ class TaskManager {
         if (!this.pendingEmotionResult) return;
 
         this.currentEmotion = this.pendingEmotionResult.emotion;
-        const icons = { focused: '🎯', stressed: '😰', neutral: '😐' };
+        const icons = { focused: '🎯', stressed: '😣', neutral: '😐' };
         const badge = document.getElementById('emotionBadge');
-        document.getElementById('emotionIcon').textContent = icons[this.currentEmotion] || '😐';
+        document.getElementById('emotionIcon').textContent = icons[this.currentEmotion] || 'N';
         document.getElementById('emotionLabel').textContent = this.currentEmotion;
         badge.style.display = 'flex';
 
@@ -860,6 +1269,8 @@ class TaskManager {
     }
 
     closeResult() {
+        // Defensive cleanup in case a stream remained active.
+        this.stopCamera();
         this.pendingEmotionResult = null;
         document.getElementById('resultModal').classList.remove('show');
         document.getElementById('modalOverlay').classList.remove('show');
@@ -907,6 +1318,16 @@ class TaskManager {
        ============================================ */
 
     setupEventListeners() {
+        const matrixSelect = document.getElementById('matrixSelect');
+        if (matrixSelect) {
+            matrixSelect.value = this.matrixType;
+            matrixSelect.addEventListener('change', (e) => {
+                this.matrixType = e.target.value || 'eisenhower';
+                this.saveMatrixType(this.matrixType);
+                this.renderTasks();
+            });
+        }
+
         // Add task
         const input = document.getElementById('taskInput');
         const dueInput = document.getElementById('taskDueInput');
@@ -977,10 +1398,24 @@ class TaskManager {
         document.getElementById('saveProfileBtn')?.addEventListener('click', () => {
             this.saveUserProfile();
         });
+        document.getElementById('sendTestSmsBtn')?.addEventListener('click', () => {
+            this.sendTestSms();
+        });
+        document.getElementById('connectGmailBtn')?.addEventListener('click', () => {
+            this.connectGmail();
+        });
+        document.getElementById('disconnectGmailBtn')?.addEventListener('click', () => {
+            this.disconnectGmail();
+        });
 
         // Emotion scan
         document.getElementById('emotionScanBtn').addEventListener('click', () => {
             this.openCamera();
+        });
+
+        // Theme toggle
+        document.getElementById('themeToggle')?.addEventListener('click', () => {
+            this.toggleTheme();
         });
 
         // Camera controls
@@ -996,6 +1431,14 @@ class TaskManager {
         // Emotion badge
         document.getElementById('clearEmotionBtn').addEventListener('click', () => this.clearEmotion());
 
+        // Recommendation feedback
+        document.getElementById('feedbackYes')?.addEventListener('click', () => {
+            this.recordRecommendationFeedback(true);
+        });
+        document.getElementById('feedbackNo')?.addEventListener('click', () => {
+            this.recordRecommendationFeedback(false);
+        });
+
         // Overlay close
         document.getElementById('modalOverlay').addEventListener('click', (e) => {
             if (e.target === e.currentTarget) {
@@ -1010,6 +1453,9 @@ class TaskManager {
         document.getElementById('logoutBtn').addEventListener('click', () => {
             if (confirm('Logout?')) {
                 localStorage.removeItem('isLoggedIn');
+                localStorage.removeItem('accessToken');
+                localStorage.removeItem('refreshToken');
+                localStorage.removeItem('userEmail');
                 localStorage.removeItem('userName');
                 window.location.href = 'login.html';
             }
@@ -1021,5 +1467,10 @@ class TaskManager {
 document.addEventListener('DOMContentLoaded', () => {
     new TaskManager();
 });
+
+
+
+
+
 
 

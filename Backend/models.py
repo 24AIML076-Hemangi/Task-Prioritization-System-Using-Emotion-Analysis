@@ -2,8 +2,9 @@
 Database models for Task Prioritization System
 """
 from datetime import datetime
+import bcrypt
 from database import db
-from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.security import check_password_hash
 
 
 class User(db.Model):
@@ -15,15 +16,31 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(30), nullable=True)
     notification_preference = db.Column(db.String(20), default='email')  # 'email' | 'sms' | 'both'
+    gmail_connected = db.Column(db.Boolean, default=False)
+    gmail_email = db.Column(db.String(120), nullable=True)
+    gmail_access_token = db.Column(db.Text, nullable=True)
+    gmail_refresh_token = db.Column(db.Text, nullable=True)
+    gmail_token_expiry = db.Column(db.DateTime, nullable=True)
+    gmail_scope = db.Column(db.Text, nullable=True)
+    last_empty_nudge_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def set_password(self, password):
-        """Hash and set the password"""
-        self.password_hash = generate_password_hash(password, method='pbkdf2:sha256')
+        """Hash and set the password using bcrypt"""
+        hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+        self.password_hash = hashed.decode("utf-8")
     
     def check_password(self, password):
-        """Verify password against hash"""
+        """Verify password against hash with backward compatibility"""
+        if not self.password_hash:
+            return False
+
+        # New format: bcrypt ($2b/$2a/$2y)
+        if self.password_hash.startswith("$2"):
+            return bcrypt.checkpw(password.encode("utf-8"), self.password_hash.encode("utf-8"))
+
+        # Backward compatibility: legacy werkzeug hash
         return check_password_hash(self.password_hash, password)
     
     def to_dict(self):
@@ -33,6 +50,9 @@ class User(db.Model):
             'email': self.email,
             'phone': self.phone,
             'notification_preference': self.notification_preference,
+            'gmail_connected': bool(self.gmail_connected and self.gmail_refresh_token),
+            'gmail_email': self.gmail_email,
+            'last_empty_nudge_at': self.last_empty_nudge_at.isoformat() if self.last_empty_nudge_at else None,
             'created_at': self.created_at.isoformat()
         }
     
@@ -55,6 +75,7 @@ class Task(db.Model):
     reminder_at = db.Column(db.DateTime, default=None)
     reminder_method = db.Column(db.String(20), default=None)  # 'email' | 'sms' | 'both'
     reminder_sent = db.Column(db.Boolean, default=False)
+    reminder_last_sent_at = db.Column(db.DateTime, default=None)
     reminder_phone = db.Column(db.String(30), default=None)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -73,6 +94,7 @@ class Task(db.Model):
             'reminder_at': self.reminder_at.isoformat() if self.reminder_at else None,
             'reminder_method': self.reminder_method,
             'reminder_sent': self.reminder_sent,
+            'reminder_last_sent_at': self.reminder_last_sent_at.isoformat() if self.reminder_last_sent_at else None,
             'reminder_phone': self.reminder_phone,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()

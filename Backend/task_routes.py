@@ -2,13 +2,43 @@
 Task management routes for the API
 """
 from flask import Blueprint, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
+import re
+import os
+import logging
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from database import db
 from models import Task, EmotionLog, User
-from modules.emotion import detect_emotion_from_image, get_emotion_icon
-from notifications import send_email, send_sms
+from modules.emotion import (
+    detect_emotion_from_image,
+    normalize_emotion_label,
+    ALLOWED_EMOTIONS,
+)
+from notifications import send_email, send_sms, build_reminder_content, build_sms_reminder_content
+
 
 task_bp = Blueprint('tasks', __name__, url_prefix='/api/tasks')
+logger = logging.getLogger(__name__)
+PHONE_REGEX = re.compile(r"^\+[1-9]\d{7,14}$")
+PHONE_COUNTRY_REGEX = re.compile(r"^\+[1-9]\d{0,3}$")
+DEFAULT_PHONE_COUNTRY = "+91"
+
+
+def normalize_phone(phone_value, phone_country=DEFAULT_PHONE_COUNTRY):
+    raw = str(phone_value or '').strip()
+    if not raw:
+        return None
+
+    if raw.startswith('+'):
+        candidate = '+' + re.sub(r'\D', '', raw[1:])
+    else:
+        digits = re.sub(r'\D', '', raw)
+        country = str(phone_country or DEFAULT_PHONE_COUNTRY).strip()
+        if not PHONE_COUNTRY_REGEX.match(country):
+            country = DEFAULT_PHONE_COUNTRY
+        candidate = f"{country}{digits}"
+
+    return candidate if PHONE_REGEX.match(candidate) else None
 
 
 def parse_datetime(value):
@@ -20,63 +50,81 @@ def parse_datetime(value):
     except Exception:
         return None
 
-# ============ GET ALL TASKS ============
+
+def get_current_user_id():
+    return get_jwt_identity()
+
+
+def get_owned_task(task_id, user_id):
+    task = Task.query.get(task_id)
+    if not task:
+        return None, (jsonify({'error': 'Task not found'}), 404)
+    if task.user_id != user_id:
+        return None, (jsonify({'error': 'Unauthorized'}), 403)
+    return task, None
+
+
 @task_bp.route('', methods=['GET'])
+@jwt_required()
 def get_tasks():
     """Get all tasks for the logged-in user"""
-    user_id = request.args.get('user_id')
-    
-    if not user_id:
-        return jsonify({'error': 'user_id is required'}), 400
-    
+    user_id = get_current_user_id()
     tasks = Task.query.filter_by(user_id=user_id).all()
     return jsonify([task.to_dict() for task in tasks]), 200
 
 
-# ============ CREATE NEW TASK ============
 @task_bp.route('', methods=['POST'])
+@jwt_required()
 def create_task():
     """Create a new task"""
-    data = request.get_json()
-    
-    # Validate required fields
-    if not data or 'title' not in data or 'user_id' not in data:
-        return jsonify({'error': 'title and user_id are required'}), 400
-    
-    # Create task with defaults
+    data = request.get_json() or {}
+    user_id = get_current_user_id()
+
+    if 'title' not in data or not str(data.get('title', '')).strip():
+        return jsonify({'error': 'title is required'}), 400
+
+    raw_reminder_phone = str(data.get('reminder_phone') or '').strip()
+    reminder_phone_country = str(data.get('reminder_phone_country', DEFAULT_PHONE_COUNTRY)).strip() or DEFAULT_PHONE_COUNTRY
+    reminder_phone = normalize_phone(raw_reminder_phone, reminder_phone_country)
+    if raw_reminder_phone and not reminder_phone:
+        return jsonify({'error': 'Invalid reminder_phone. Enter local digits with country code, or full E.164'}), 400
+
+    emotion_applied = None
+    if 'emotion_applied' in data and data.get('emotion_applied') is not None:
+        emotion_applied = normalize_emotion_label(data.get('emotion_applied'))
+
     new_task = Task(
-        user_id=data['user_id'],
-        title=data['title'],
+        user_id=user_id,
+        title=str(data['title']).strip(),
         importance=data.get('importance', 'not-important'),
         urgency=data.get('urgency', 'not-urgent'),
-        emotion_applied=data.get('emotion_applied'),
+        emotion_applied=emotion_applied,
         due_at=parse_datetime(data.get('due_at')),
         reminder_at=parse_datetime(data.get('reminder_at')),
         reminder_method=data.get('reminder_method'),
-        reminder_phone=data.get('reminder_phone')
+        reminder_phone=reminder_phone
     )
     if new_task.reminder_at:
         new_task.reminder_sent = False
-    
+
     db.session.add(new_task)
     db.session.commit()
-    
-    print(f"✓ Task created: {new_task.title} (ID: {new_task.id})")
+
+    print(f"Task created: {new_task.title} (ID: {new_task.id})")
     return jsonify(new_task.to_dict()), 201
 
 
-# ============ UPDATE TASK ============
 @task_bp.route('/<int:task_id>', methods=['PUT'])
+@jwt_required()
 def update_task(task_id):
     """Update an existing task"""
-    task = Task.query.get(task_id)
-    
-    if not task:
-        return jsonify({'error': 'Task not found'}), 404
-    
-    data = request.get_json()
-    
-    # Update fields if provided
+    user_id = get_current_user_id()
+    task, error = get_owned_task(task_id, user_id)
+    if error:
+        return error
+
+    data = request.get_json() or {}
+
     if 'title' in data:
         task.title = data['title']
     if 'importance' in data:
@@ -85,95 +133,117 @@ def update_task(task_id):
         task.urgency = data['urgency']
     if 'completed' in data:
         task.completed = data['completed']
+        if task.completed:
+            # Completing a task cancels reminder dispatch for that task.
+            task.reminder_sent = True
     if 'emotion_applied' in data:
-        task.emotion_applied = data['emotion_applied']
+        task.emotion_applied = normalize_emotion_label(data.get('emotion_applied'))
     if 'due_at' in data:
         task.due_at = parse_datetime(data.get('due_at'))
     if 'reminder_at' in data:
         task.reminder_at = parse_datetime(data.get('reminder_at'))
         task.reminder_sent = False if task.reminder_at else task.reminder_sent
+        task.reminder_last_sent_at = None
     if 'reminder_method' in data:
         task.reminder_method = data.get('reminder_method')
     if 'reminder_phone' in data:
-        task.reminder_phone = data.get('reminder_phone')
-    
+        raw_reminder_phone = str(data.get('reminder_phone') or '').strip()
+        reminder_phone_country = str(data.get('reminder_phone_country', DEFAULT_PHONE_COUNTRY)).strip() or DEFAULT_PHONE_COUNTRY
+        reminder_phone = normalize_phone(raw_reminder_phone, reminder_phone_country)
+        if raw_reminder_phone and not reminder_phone:
+            return jsonify({'error': 'Invalid reminder_phone. Enter local digits with country code, or full E.164'}), 400
+        task.reminder_phone = reminder_phone
+
     db.session.commit()
-    
-    print(f"✓ Task updated: {task.title} (ID: {task_id})")
+
+    print(f"Task updated: {task.title} (ID: {task_id})")
     return jsonify(task.to_dict()), 200
 
 
-# ============ DELETE TASK ============
 @task_bp.route('/<int:task_id>', methods=['DELETE'])
+@jwt_required()
 def delete_task(task_id):
     """Delete a task"""
-    task = Task.query.get(task_id)
-    
-    if not task:
-        return jsonify({'error': 'Task not found'}), 404
-    
+    user_id = get_current_user_id()
+    task, error = get_owned_task(task_id, user_id)
+    if error:
+        return error
+
     db.session.delete(task)
     db.session.commit()
-    
-    print(f"✓ Task deleted: ID {task_id}")
+
+    print(f"Task deleted: ID {task_id}")
     return jsonify({'message': 'Task deleted successfully'}), 200
 
 
-# ============ MARK TASK COMPLETE ============
 @task_bp.route('/<int:task_id>/complete', methods=['PATCH'])
+@jwt_required()
 def toggle_task_complete(task_id):
     """Toggle task completion status"""
-    task = Task.query.get(task_id)
-    
-    if not task:
-        return jsonify({'error': 'Task not found'}), 404
-    
+    user_id = get_current_user_id()
+    task, error = get_owned_task(task_id, user_id)
+    if error:
+        return error
+
     task.completed = not task.completed
+    if task.completed:
+        task.reminder_sent = True
+    elif task.reminder_at:
+        task.reminder_sent = False
     db.session.commit()
-    
-    status = "completed" if task.completed else "pending"
-    print(f"✓ Task marked as {status}: {task.title}")
+
+    status = 'completed' if task.completed else 'pending'
+    print(f"Task marked as {status}: {task.title}")
     return jsonify(task.to_dict()), 200
 
 
-# ============ LOG EMOTION SCAN ============
 @task_bp.route('/emotion/log', methods=['POST'])
+@jwt_required()
 def log_emotion():
-    """Log an emotion scan"""
-    data = request.get_json()
-    
-    if not data or 'user_id' not in data or 'emotion' not in data:
-        return jsonify({'error': 'user_id and emotion are required'}), 400
-    
+    """Log an emotion scan for the authenticated user"""
+    data = request.get_json() or {}
+    raw_emotion = data.get('emotion')
+    if not raw_emotion:
+        return jsonify({'error': 'emotion is required'}), 400
+    emotion = normalize_emotion_label(raw_emotion)
+    if emotion not in ALLOWED_EMOTIONS:
+        return jsonify({'error': f'Invalid emotion. Allowed: {sorted(ALLOWED_EMOTIONS)}'}), 400
+
+    user_id = get_current_user_id()
     emotion_log = EmotionLog(
-        user_id=data['user_id'],
-        emotion=data['emotion'],
+        user_id=user_id,
+        emotion=emotion,
         confidence=data.get('confidence', 0.0)
     )
-    
+
     db.session.add(emotion_log)
     db.session.commit()
-    
-    print(f"✓ Emotion logged: {data['emotion']} ({data.get('confidence', 0.0)}) for {data['user_id']}")
+
     return jsonify(emotion_log.to_dict()), 201
 
 
-# ============ EMOTION SCAN ============
 @task_bp.route('/emotion-scan', methods=['POST'])
+@jwt_required()
 def emotion_scan():
     """Analyze emotion from image and return emotion type with confidence"""
     data = request.get_json() or {}
-    
     image_base64 = data.get('image')
-    user_id = data.get('user_id')
-    
-    if not image_base64 or not user_id:
-        return jsonify({'error': 'image and user_id are required'}), 400
-    
-    # Detect emotion from image
-    emotion_result = detect_emotion_from_image(image_base64)
-    
-    # Log emotion to database
+    user_id = get_current_user_id()
+
+    if not image_base64:
+        return jsonify({'error': 'image is required'}), 400
+
+    try:
+        emotion_result = detect_emotion_from_image(image_base64)
+    except Exception as exc:
+        logger.exception("Emotion scan failed, using neutral fallback: %s", exc)
+        emotion_result = {
+            "emotion": "neutral",
+            "confidence": 0.6,
+            "message": "Emotion scan unavailable. Using neutral fallback.",
+        }
+    emotion_result["emotion"] = normalize_emotion_label(emotion_result.get("emotion"))
+
     emotion_log = EmotionLog(
         user_id=user_id,
         emotion=emotion_result['emotion'],
@@ -181,50 +251,75 @@ def emotion_scan():
     )
     db.session.add(emotion_log)
     db.session.commit()
-    
-    print(f"✓ Emotion scan: {emotion_result['emotion']} ({emotion_result['confidence']}) for {user_id}")
-    
+
     return jsonify(emotion_result), 200
 
 
-# ============ DISPATCH REMINDERS ============
 @task_bp.route('/reminders/dispatch', methods=['POST'])
+@jwt_required()
 def dispatch_reminders():
-    """Send due reminders for a user (email/SMS)"""
-    data = request.get_json() or {}
-    user_id = data.get('user_id')
-    if not user_id:
-        return jsonify({'error': 'user_id is required'}), 400
-
+    """Send due reminders for the authenticated user (email/SMS)"""
+    user_id = get_current_user_id()
     now = datetime.utcnow()
-    tasks = Task.query.filter_by(user_id=user_id).all()
-    due = [t for t in tasks if t.reminder_at and not t.reminder_sent and t.reminder_at <= now]
+    cooldown_minutes = int(os.getenv("REMINDER_COOLDOWN_MINUTES", "30"))
+    max_per_run = int(os.getenv("REMINDER_MAX_PER_USER_PER_RUN", "5"))
 
+    tasks = Task.query.filter_by(user_id=user_id).all()
+    due = [t for t in tasks if t.reminder_at and not t.reminder_sent and t.reminder_at <= now and not t.completed]
+
+    user = User.query.filter_by(email=user_id).first()
     sent = 0
+
     for task in due:
-        user = User.query.filter_by(email=task.user_id).first()
+        if sent >= max_per_run:
+            break
+        if task.reminder_last_sent_at and now - task.reminder_last_sent_at < timedelta(minutes=cooldown_minutes):
+            continue
+
         account_preference = (user.notification_preference if user and user.notification_preference else 'email').lower()
         method = (task.reminder_method or account_preference or 'email').lower()
-        subject = f"Task Reminder: {task.title}"
-        body = f"Reminder for task: {task.title}"
 
         ok_email = False
         ok_sms = False
+        to_email = user.email if user else (user_id if '@' in user_id else None)
+        phone = task.reminder_phone or (user.phone if user else None)
+        email_attemptable = bool(to_email) if method in ['email', 'both'] else False
+        sms_attemptable = bool(phone and PHONE_REGEX.match(phone)) if method in ['sms', 'both'] else False
 
-        if method in ['email', 'both']:
-            to_email = user.email if user else (user_id if '@' in user_id else data.get('email'))
-            if to_email:
-                ok_email = send_email(to_email, subject, body)
+        if method in ['email', 'both'] and email_attemptable:
+                subject, body = build_reminder_content(
+                    task.title,
+                    to_email,
+                    importance=task.importance,
+                    urgency=task.urgency,
+                    is_daily=False,
+                )
+                ok_email = send_email(to_email, subject, body, owner_email=user_id)
 
-        if method in ['sms', 'both']:
-            phone = task.reminder_phone or (user.phone if user else None)
-            if phone:
-                ok_sms = send_sms(phone, body)
-            else:
-                ok_sms = False
+        if method in ['sms', 'both'] and sms_attemptable:
+                ok_sms = send_sms(
+                    phone,
+                    build_sms_reminder_content(
+                        task.title,
+                        importance=task.importance,
+                        urgency=task.urgency,
+                        is_daily=False,
+                    ),
+                )
 
-        if (method == 'email' and ok_email) or (method == 'sms' and ok_sms) or (method == 'both' and ok_email and ok_sms):
+        delivery_satisfied = (
+            (method == 'email' and ok_email)
+            or (method == 'sms' and ok_sms)
+            or (method == 'both' and (ok_email or ok_sms))
+        )
+        terminal_misconfig = (
+            (method == 'email' and not email_attemptable)
+            or (method == 'sms' and not sms_attemptable)
+            or (method == 'both' and not email_attemptable and not sms_attemptable)
+        )
+        if delivery_satisfied or terminal_misconfig:
             task.reminder_sent = True
+            task.reminder_last_sent_at = now
             sent += 1
 
     if sent:

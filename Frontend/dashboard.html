@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Task Prioritize Using Emotion Analysis</title>
+    <title>Task Prioritization System Using Emotion Analysis</title>
     <link rel="stylesheet" href="dashboard-style.css">
 </head>
 <body>
     <div class="app-splash" id="appSplash" aria-hidden="true">
         <div class="splash-card">
             <img class="splash-logo" src="logo.png" alt="Task Prioritization System logo" />
-            <div class="splash-title">TaskPrioritize</div>
+            <div class="splash-title">Task Prioritization System</div>
             <div class="splash-sub">Using Emotion Analysis</div>
         </div>
     </div>
@@ -19,16 +19,27 @@
         <div class="navbar-content">
             <div class="navbar-brand">
                 <img class="navbar-logo" src="logo.png" alt="Task Prioritization System logo" />
-                <h1>TaskPrioritize</h1>
+                <h1>Task Prioritization System Using Emotion Analysis</h1>
             </div>
 
             <div class="navbar-actions">
+                <button class="btn-panel btn-panel-left" id="toggleLeftPanel" title="Toggle left panel">
+                    <span aria-hidden="true">?</span>
+                    <span class="panel-text">Views</span>
+                </button>
                 <button class="btn-emotion-scan" id="emotionScanBtn" title="Scan your emotion">
-                    Scan
+                    <span class="scan-icon" aria-hidden="true">📷</span>
+                    <span>Scan Me</span>
                 </button>
                 <button class="btn-theme" id="themeToggle" title="Toggle theme">
-                    Theme: <span id="themeLabel">Light</span>
+                    <span class="theme-icon" aria-hidden="true">🌓</span>
+                    <span class="theme-text">Theme: <span id="themeLabel">Light</span></span>
                 </button>
+                <button class="btn-panel btn-panel-right" id="toggleRightPanel" title="Toggle right panel">
+                    <span aria-hidden="true">?</span>
+                    <span class="panel-text">Panel</span>
+                </button>
+                <a class="nav-link" href="about.html">About</a>
                 <span class="user-name" id="userInfo">User</span>
                 <button class="btn-logout" id="logoutBtn" title="Logout">
                     Logout
@@ -136,8 +147,14 @@
             <!-- Task List - Grouped by Date -->
             <section class="tasks-list">
                 <div id="tasksList">
-                    <div class="empty-state">
-                        <p>📋 No tasks. Add one to get started!</p>
+                                        <div class="empty-state">
+                        <p>?? Welcome! Start by adding your first task.</p>
+                        <div class="empty-steps">
+                            <div>1?? Type a task in the input box</div>
+                            <div>2?? Press Enter</div>
+                            <div>3?? Choose a prioritization matrix</div>
+                            <div>4?? Organize your tasks easily</div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -209,6 +226,14 @@
         </aside>
     </div>
 
+    <footer class="legal-footer">
+        By using this app you agree to the
+        <a href="terms.html" class="legal-link">Terms &amp; Conditions</a>
+        and
+        <a href="privacy.html" class="legal-link">Privacy Policy</a>.
+        <a href="contact.html" class="legal-link">Contact Us</a>
+    </footer>
+
     <!-- EMOTION SCAN - Camera Modal -->
     <div class="modal-overlay" id="modalOverlay"></div>
 
@@ -225,7 +250,6 @@
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" id="cancelCamera">Cancel</button>
-            <button class="btn-primary" id="captureImage">Analyze Now</button>
         </div>
     </div>
 
@@ -238,8 +262,19 @@
         <div class="modal-body emotion-result">
             <div class="emotion-icon-large" id="resultIcon"></div>
             <h3 id="resultEmotion"></h3>
+            <div class="breath-wrap" id="breathWrap" aria-live="polite" style="display: none;">
+                <div class="breath-circle" aria-hidden="true"></div>
+                <div class="breath-text">Breathe in... hold... breathe out.</div>
+            </div>
             <p id="resultMessage"></p>
             <p class="confidence-text">Confidence: <span id="resultConfidence"></span>%</p>
+            <div class="emotion-debug" id="emotionDebug" style="display: none;">
+                <div><strong>Debug</strong></div>
+                <div>Source: <span id="debugSource"></span></div>
+                <div>Dominant: <span id="debugDominant"></span></div>
+                <div>Best: <span id="debugBest"></span></div>
+                <div>Scores: <span id="debugScores"></span></div>
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" id="rejectEmotion">Dismiss</button>
@@ -260,6 +295,7 @@
     </script>
 </body>
 </html>
+
 
 
 

@@ -26,6 +26,8 @@ class TaskManager {
         this.googlePopupPoller = null;
         this.matrixType = this.loadMatrixType();
         this.themeMode = this.loadTheme();
+        this.currentEmotionLabel = null;
+        this.nextFetchAllowedAt = 0;
 
         this.init();
     }
@@ -134,12 +136,20 @@ class TaskManager {
        ============================================ */
 
     async loadTasks() {
+        if (Date.now() < this.nextFetchAllowedAt) {
+            return;
+        }
         const previousTasks = this.tasks;
         try {
             const response = await this.apiFetch(this.apiUrl);
             if (response.ok) {
                 this.tasks = await response.json();
+                this.nextFetchAllowedAt = 0;
             } else {
+                if (response.status === 429) {
+                    // Back off if we hit rate limits.
+                    this.nextFetchAllowedAt = Date.now() + 2 * 60 * 1000;
+                }
                 console.warn(`Task load failed with status ${response.status}; keeping previous task list.`);
                 this.tasks = previousTasks;
             }
@@ -542,7 +552,30 @@ class TaskManager {
 
     getRecommendedTaskIds(activeTasks) {
         if (!this.currentEmotion) return [];
-        return (activeTasks || []).slice(0, 3).map((task) => task.id);
+        const ranked = (activeTasks || [])
+            .map((task) => ({
+                task,
+                score: this.scoreTaskForEmotion(task, this.currentEmotion),
+            }))
+            .sort((a, b) => b.score - a.score);
+        return ranked.slice(0, 3).map((entry) => entry.task.id);
+    }
+
+    scoreTaskForEmotion(task, emotion) {
+        const imp = task.importance === 'important';
+        const urg = task.urgency === 'urgent';
+        const title = String(task.title || '').trim();
+        const complexity = Math.min(1, title.length / 40); // 0..1 proxy
+
+        if (emotion === 'focused') {
+            return (imp ? 2 : 0) + (urg ? 1 : 0) + complexity;
+        }
+        if (emotion === 'stressed') {
+            const calmness = 1 - complexity;
+            return (urg ? 2 : 0) + (imp ? 1 : 0) + calmness;
+        }
+        const mid = 1 - Math.abs(complexity - 0.5);
+        return (imp ? 1 : 0) + (urg ? 1 : 0) + mid;
     }
 
     renderRecommendedSection(activeTasks) {
@@ -565,11 +598,11 @@ class TaskManager {
         if (status) status.textContent = '';
         if (hint) {
             if (this.currentEmotion === 'stressed') {
-                hint.textContent = 'Keep tasks short and urgent. Reduce workload where possible.';
+                hint.textContent = 'Pause, breathe, and pick one small urgent task. You can do this.';
             } else if (this.currentEmotion === 'focused') {
-                hint.textContent = 'Deep-work window. Prioritize complex, high-priority tasks.';
+                hint.textContent = 'Focus mode: tackle the hardest high-impact task first.';
             } else {
-                hint.textContent = 'Good time for routine planning and medium-priority tasks.';
+                hint.textContent = 'Neutral mode: aim for steady progress with medium-priority tasks.';
             }
         }
         list.innerHTML = topThree
@@ -937,6 +970,7 @@ class TaskManager {
                     <button class="btn-secondary" id="detailClear">Clear</button>
                     <button class="btn-primary" id="detailSave">Save</button>
                 </div>
+                <div class="detail-status" id="detailStatus"></div>
             </div>
         `;
 
@@ -961,6 +995,9 @@ class TaskManager {
         const dueRaw = document.getElementById('detailDue').value;
         const reminderRaw = document.getElementById('detailReminder').value;
         const method = document.getElementById('detailMethod').value;
+        const statusEl = document.getElementById('detailStatus');
+        const saveBtn = document.getElementById('detailSave');
+        const clearBtn = document.getElementById('detailClear');
 
         const updateData = {
             due_at: dueRaw || null,
@@ -978,6 +1015,13 @@ class TaskManager {
         }
 
         try {
+            if (statusEl) {
+                statusEl.textContent = clearAll ? 'Clearing…' : 'Saving…';
+                statusEl.classList.remove('error');
+            }
+            if (saveBtn) saveBtn.disabled = true;
+            if (clearBtn) clearBtn.disabled = true;
+
             const response = await this.apiFetch(`${this.apiUrl}/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -989,9 +1033,33 @@ class TaskManager {
                 this.renderTasks();
                 this.renderTaskDetails(task);
                 this.generateCalendar();
+                if (statusEl) statusEl.textContent = 'Saved';
+            } else {
+                let message = 'Unable to save changes.';
+                try {
+                    const data = await response.json();
+                    if (data && data.error) message = data.error;
+                } catch {
+                    // ignore
+                }
+                if (statusEl) {
+                    statusEl.textContent = message;
+                    statusEl.classList.add('error');
+                } else {
+                    alert(message);
+                }
             }
         } catch (error) {
             console.error('Detail update error:', error);
+            if (statusEl) {
+                statusEl.textContent = 'Save failed. Check connection and try again.';
+                statusEl.classList.add('error');
+            } else {
+                alert('Save failed. Check connection and try again.');
+            }
+        } finally {
+            if (saveBtn) saveBtn.disabled = false;
+            if (clearBtn) clearBtn.disabled = false;
         }
     }
 
@@ -1049,7 +1117,7 @@ class TaskManager {
             }
         };
 
-        setInterval(run, 5000);
+        setInterval(run, 120000);
     }
 
     escape(text) {
@@ -1206,11 +1274,15 @@ class TaskManager {
 
         const base64 = canvas.toDataURL('image/jpeg').split(',')[1];
 
+        let timeoutId = null;
         try {
+            const controller = new AbortController();
+            timeoutId = setTimeout(() => controller.abort(), 6000);
             // Try real API
             const res = await this.apiFetch(`${this.apiUrl}/emotion-scan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
                 body: JSON.stringify({ image: base64 }),
             });
             if (res.ok) {
@@ -1220,6 +1292,8 @@ class TaskManager {
             }
         } catch (err) {
             console.log('API unavailable, using mock');
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
 
         // Fallback to mock
@@ -1229,25 +1303,65 @@ class TaskManager {
         return { emotion: 'neutral', confidence: 0.6 };
     }
 
+    formatEmotionLabel(label) {
+        const text = String(label || '').trim();
+        if (!text) return '';
+        return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+    }
+
+    resolveEmotionDisplay(result, safeEmotion) {
+        const raw = String(
+            (result && result.debug && (result.debug.best_emotion || result.debug.dominant_emotion)) || result?.emotion || ''
+        ).trim().toLowerCase();
+
+        if (['happy', 'surprise', 'smile'].includes(raw)) {
+            return {
+                label: 'Happy',
+                icon: '\u{1F60A}',
+                message: 'Happy mode: great time for creative or challenging work while your energy is high.',
+            };
+        }
+
+        if (safeEmotion === 'focused') {
+            return {
+                label: 'Focused',
+                icon: '\u{1F3AF}',
+                message: 'Focus mode: go for a high-impact, challenging task while your energy is up.',
+            };
+        }
+        if (safeEmotion === 'stressed') {
+            return {
+                label: 'Stressed',
+                icon: '\u{1F623}',
+                message: 'Stress mode: take a slow breath, then pick one small urgent task. You can do this.',
+            };
+        }
+        return {
+            label: 'Neutral',
+            icon: '\u{1F610}',
+            message: 'Neutral mode: steady progress with medium-priority tasks and light planning.',
+        };
+    }
+
     showEmotionResult(result) {
         this.closeCamera();
-
-        const icons = { focused: '🎯', stressed: '😣', neutral: '😐' };
-        const messages = {
-            focused: 'Focus mode: prioritize deep-work, long-term, high-complexity tasks.',
-            stressed: 'Stress mode: start with short urgent tasks and split large tasks into subtasks.',
-            neutral: 'Neutral mode: prioritize routine planning and medium-priority tasks.',
-        };
 
         const safeEmotion = ['focused', 'stressed', 'neutral'].includes(result.emotion)
             ? result.emotion
             : 'neutral';
-        this.pendingEmotionResult = { ...result, emotion: safeEmotion };
+        const display = this.resolveEmotionDisplay(result, safeEmotion);
+        this.pendingEmotionResult = { ...result, emotion: safeEmotion, displayLabel: display.label, displayIcon: display.icon };
 
-        document.getElementById('resultIcon').textContent = icons[safeEmotion];
-        document.getElementById('resultEmotion').textContent = safeEmotion;
+        const breathWrap = document.getElementById('breathWrap');
+        if (breathWrap) {
+            breathWrap.style.display = safeEmotion === 'stressed' ? 'flex' : 'none';
+        }
+
+        document.getElementById('resultIcon').textContent = display.icon;
+        document.getElementById('resultEmotion').textContent = display.label;
         document.getElementById('resultConfidence').textContent = Math.round((result.confidence || 0) * 100);
-        document.getElementById('resultMessage').textContent = messages[safeEmotion];
+        document.getElementById('resultMessage').textContent = display.message;
+        this.renderEmotionDebug(result);
 
         // Show result modal
         document.getElementById('resultModal').classList.add('show');
@@ -1258,10 +1372,13 @@ class TaskManager {
         if (!this.pendingEmotionResult) return;
 
         this.currentEmotion = this.pendingEmotionResult.emotion;
-        const icons = { focused: '🎯', stressed: '😣', neutral: '😐' };
+        const icons = { focused: '\u{1F3AF}', stressed: '\u{1F623}', neutral: '\u{1F610}' };
         const badge = document.getElementById('emotionBadge');
-        document.getElementById('emotionIcon').textContent = icons[this.currentEmotion] || 'N';
-        document.getElementById('emotionLabel').textContent = this.currentEmotion;
+        const displayLabel = this.pendingEmotionResult.displayLabel || this.formatEmotionLabel(this.currentEmotion);
+        const displayIcon = this.pendingEmotionResult.displayIcon || icons[this.currentEmotion] || 'N';
+        this.currentEmotionLabel = displayLabel;
+        document.getElementById('emotionIcon').textContent = displayIcon;
+        document.getElementById('emotionLabel').textContent = displayLabel;
         badge.style.display = 'flex';
 
         this.renderTasks();
@@ -1274,6 +1391,25 @@ class TaskManager {
         this.pendingEmotionResult = null;
         document.getElementById('resultModal').classList.remove('show');
         document.getElementById('modalOverlay').classList.remove('show');
+    }
+
+    renderEmotionDebug(result) {
+        const wrap = document.getElementById('emotionDebug');
+        if (!wrap) return;
+        const debug = result && result.debug ? result.debug : null;
+        if (!debug) {
+            wrap.style.display = 'none';
+            return;
+        }
+        const scores = debug.scores || {};
+        const scorePairs = Object.keys(scores)
+            .map((k) => `${k}:${Math.round(scores[k])}`)
+            .join(', ');
+        wrap.style.display = 'block';
+        document.getElementById('debugSource').textContent = debug.source || '-';
+        document.getElementById('debugDominant').textContent = debug.dominant_emotion || '-';
+        document.getElementById('debugBest').textContent = debug.best_emotion || '-';
+        document.getElementById('debugScores').textContent = scorePairs || '-';
     }
 
     clearEmotion() {
@@ -1305,6 +1441,8 @@ class TaskManager {
             remaining -= 1;
             if (remaining > 0) {
                 msg.textContent = `Scanning in ${remaining}s... Keep your face in frame.`;
+            } else {
+                msg.textContent = 'Analyzing...';
             }
         }, 1000);
 
@@ -1345,11 +1483,20 @@ class TaskManager {
             }
         });
 
-        // Toggle calendar (mobile)
-        document.getElementById('toggleCalendarBtn')?.addEventListener('click', () => {
-            document.getElementById('sidebar').classList.toggle('visible');
+        const leftToggle = document.getElementById('toggleLeftPanel');
+        const rightToggle = document.getElementById('toggleRightPanel');
+        const leftPanel = document.getElementById('sidebarLeft');
+        const rightPanel = document.getElementById('sidebarRight');
+
+        leftToggle?.addEventListener('click', () => {
+            if (leftPanel) leftPanel.classList.toggle('visible');
+            if (rightPanel) rightPanel.classList.remove('visible');
         });
 
+        rightToggle?.addEventListener('click', () => {
+            if (rightPanel) rightPanel.classList.toggle('visible');
+            if (leftPanel) leftPanel.classList.remove('visible');
+        });
 
         // Sidebar filters
         document.querySelectorAll('.nav-item').forEach(btn => {
@@ -1421,7 +1568,7 @@ class TaskManager {
         // Camera controls
         document.getElementById('closeCamera').addEventListener('click', () => this.closeCamera());
         document.getElementById('cancelCamera').addEventListener('click', () => this.closeCamera());
-        document.getElementById('captureImage').addEventListener('click', () => this.analyzeEmotion());
+        document.getElementById('captureImage')?.addEventListener('click', () => this.analyzeEmotion());
 
         // Result modal
         document.getElementById('closeResult').addEventListener('click', () => this.closeResult());

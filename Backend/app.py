@@ -142,15 +142,15 @@ def dispatch_all_due_reminders():
                         )
                         ok_email = send_email(user.email, subject, body, owner_email=user.email)
                     if method in ["sms", "both"] and sms_attemptable:
-                            ok_sms = send_sms(
-                                phone,
-                                build_sms_reminder_content(
-                                    task.title,
-                                    importance=task.importance,
-                                    urgency=task.urgency,
-                                    is_daily=True,
-                                ),
-                            )
+                        ok_sms = send_sms(
+                            phone,
+                            build_sms_reminder_content(
+                                task.title,
+                                importance=task.importance,
+                                urgency=task.urgency,
+                                is_daily=True,
+                            ),
+                        )
 
                     delivery_satisfied = (
                         (method == "email" and ok_email)

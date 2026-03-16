@@ -27,6 +27,20 @@ def normalize_emotion_label(value):
     return EMOTION_NEUTRAL
 
 
+def _clean_base64_image(base64_image):
+    """Strip data URL prefix and fix padding so base64 decoding is reliable."""
+    raw = str(base64_image or "").strip()
+    if not raw:
+        return ""
+    if "," in raw and raw.lower().startswith("data:image"):
+        raw = raw.split(",", 1)[1]
+    # Fix missing padding if needed
+    padding = (-len(raw)) % 4
+    if padding:
+        raw = f"{raw}{'=' * padding}"
+    return raw
+
+
 def detect_emotion_from_image(base64_image):
     """
     Detect emotion from base64 encoded image
@@ -42,13 +56,19 @@ def detect_emotion_from_image(base64_image):
         }
     """
     try:
-        image_data = base64.b64decode(base64_image)
+        cleaned = _clean_base64_image(base64_image)
+        image_data = base64.b64decode(cleaned)
 
         if len(image_data) < 100:
             return {
                 "emotion": EMOTION_NEUTRAL,
                 "confidence": 0.5,
                 "message": "Image quality too low, using neutral detection",
+                "debug": {
+                    "source": "low_quality",
+                    "dominant_emotion": EMOTION_NEUTRAL,
+                    "scores": {},
+                },
             }
 
         try:
@@ -59,6 +79,11 @@ def detect_emotion_from_image(base64_image):
                 "emotion": EMOTION_NEUTRAL,
                 "confidence": 0.6,
                 "message": "DeepFace not installed; using neutral detection",
+                "debug": {
+                    "source": "missing_deepface",
+                    "dominant_emotion": EMOTION_NEUTRAL,
+                    "scores": {},
+                },
             }
 
         image = Image.open(BytesIO(image_data)).convert("RGB")
@@ -68,23 +93,44 @@ def detect_emotion_from_image(base64_image):
             img_array,
             actions=["emotion"],
             enforce_detection=False,
+            detector_backend="retinaface",
+            align=True,
         )
 
         if isinstance(analysis, list):
             analysis = analysis[0]
 
         dominant = str(analysis.get("dominant_emotion", EMOTION_NEUTRAL)).strip().lower()
-        scores = analysis.get("emotion", {})
+        scores = analysis.get("emotion", {}) or {}
 
-        raw_conf = scores.get(dominant, 0.0)
-        confidence = max(0.0, min(1.0, round(raw_conf / 100.0, 2)))
+        if scores:
+            best_raw_emotion = max(scores, key=scores.get)
+            raw_conf = scores.get(best_raw_emotion, 0.0)
+        else:
+            best_raw_emotion = dominant
+            raw_conf = 0.0
 
-        emotion = map_deepface_emotion(dominant)
+        confidence = max(0.0, min(1.0, round(float(raw_conf) / 100.0, 2)))
+
+        # If happy is close to the top score, treat it as focused to reduce mislabels.
+        if scores:
+            happy_score = float(scores.get("happy", 0.0))
+            top_score = float(scores.get(best_raw_emotion, 0.0))
+            if best_raw_emotion not in {"happy", "surprise"} and happy_score >= 20 and (top_score - happy_score) <= 5:
+                best_raw_emotion = "happy"
+
+        emotion = map_deepface_emotion(best_raw_emotion or dominant)
 
         return {
             "emotion": emotion,
             "confidence": confidence,
             "message": emotion_message(emotion),
+            "debug": {
+                "source": "deepface",
+                "dominant_emotion": dominant,
+                "best_emotion": best_raw_emotion,
+                "scores": scores,
+            },
         }
 
     except Exception as exc:
@@ -93,6 +139,11 @@ def detect_emotion_from_image(base64_image):
             "emotion": EMOTION_NEUTRAL,
             "confidence": 0.6,
             "message": "Error processing image, using neutral detection",
+            "debug": {
+                "source": "error",
+                "dominant_emotion": EMOTION_NEUTRAL,
+                "scores": {},
+            },
         }
 
 
@@ -102,6 +153,11 @@ def get_mock_emotion():
         "emotion": EMOTION_NEUTRAL,
         "confidence": 0.6,
         "message": emotion_message(EMOTION_NEUTRAL),
+        "debug": {
+            "source": "mock",
+            "dominant_emotion": EMOTION_NEUTRAL,
+            "scores": {},
+        },
     }
 
 

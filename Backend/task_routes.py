@@ -241,6 +241,11 @@ def emotion_scan():
             "emotion": "neutral",
             "confidence": 0.6,
             "message": "Emotion scan unavailable. Using neutral fallback.",
+            "debug": {
+                "source": "error",
+                "dominant_emotion": "neutral",
+                "scores": {},
+            },
         }
     emotion_result["emotion"] = normalize_emotion_label(emotion_result.get("emotion"))
 
@@ -287,25 +292,25 @@ def dispatch_reminders():
         sms_attemptable = bool(phone and PHONE_REGEX.match(phone)) if method in ['sms', 'both'] else False
 
         if method in ['email', 'both'] and email_attemptable:
-                subject, body = build_reminder_content(
+            subject, body = build_reminder_content(
+                task.title,
+                to_email,
+                importance=task.importance,
+                urgency=task.urgency,
+                is_daily=False,
+            )
+            ok_email = send_email(to_email, subject, body, owner_email=user_id)
+
+        if method in ['sms', 'both'] and sms_attemptable:
+            ok_sms = send_sms(
+                phone,
+                build_sms_reminder_content(
                     task.title,
-                    to_email,
                     importance=task.importance,
                     urgency=task.urgency,
                     is_daily=False,
-                )
-                ok_email = send_email(to_email, subject, body, owner_email=user_id)
-
-        if method in ['sms', 'both'] and sms_attemptable:
-                ok_sms = send_sms(
-                    phone,
-                    build_sms_reminder_content(
-                        task.title,
-                        importance=task.importance,
-                        urgency=task.urgency,
-                        is_daily=False,
-                    ),
-                )
+                ),
+            )
 
         delivery_satisfied = (
             (method == 'email' and ok_email)

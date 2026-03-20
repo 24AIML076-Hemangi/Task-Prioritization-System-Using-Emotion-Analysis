@@ -69,19 +69,34 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-weight: 700;
   color: #5b21b6;
-  font-size: 20px;
 }
 
 .brand-logo {
-  width: 36px;
-  height: 36px;
+  width: 52px;
+  height: 52px;
   object-fit: contain;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
   animation: logo-float 2.4s ease-in-out infinite;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.brand-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: #7c3aed;
+  letter-spacing: 0.2px;
 }
 
 .login-page {
@@ -268,5 +283,14 @@ body {
 
   .actions button {
     width: 100%;
+  }
+
+  .brand-logo {
+    width: 44px;
+    height: 44px;
+  }
+
+  .brand-title {
+    font-size: 14px;
   }
 }

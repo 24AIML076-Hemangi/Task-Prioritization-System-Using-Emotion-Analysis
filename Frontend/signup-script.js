@@ -142,6 +142,7 @@ function submitSignup(fullname, email, username, phone, notificationPreference, 
         },
         body: JSON.stringify({
             email: email,
+            username: username,
             password: password,
             phone: phone || null,
             notification_preference: notificationPreference || 'email'

@@ -15,6 +15,7 @@ from modules.emotion import (
     ALLOWED_EMOTIONS,
 )
 from notifications import send_email, send_sms, build_reminder_content, build_sms_reminder_content
+from activity_logger import log_activity
 
 
 task_bp = Blueprint('tasks', __name__, url_prefix='/api/tasks')
@@ -49,6 +50,28 @@ def parse_datetime(value):
         return dt.replace(tzinfo=None)
     except Exception:
         return None
+
+
+def parse_time(value):
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%H:%M").time()
+    except Exception:
+        try:
+            return datetime.strptime(raw, "%H:%M:%S").time()
+        except Exception:
+            return None
+
+
+def merge_date_time(date_value, time_value):
+    if not time_value:
+        return None
+    base_date = date_value.date() if date_value else datetime.utcnow().date()
+    return datetime.combine(base_date, time_value)
 
 
 def get_current_user_id():
@@ -93,23 +116,33 @@ def create_task():
     if 'emotion_applied' in data and data.get('emotion_applied') is not None:
         emotion_applied = normalize_emotion_label(data.get('emotion_applied'))
 
+    due_time = parse_time(data.get('due_time'))
+    due_at = parse_datetime(data.get('due_at'))
+
     new_task = Task(
         user_id=user_id,
         title=str(data['title']).strip(),
         importance=data.get('importance', 'not-important'),
         urgency=data.get('urgency', 'not-urgent'),
         emotion_applied=emotion_applied,
-        due_at=parse_datetime(data.get('due_at')),
+        due_at=due_at,
+        due_time=due_time,
         reminder_at=parse_datetime(data.get('reminder_at')),
         reminder_method=data.get('reminder_method'),
         reminder_phone=reminder_phone
     )
+    if not new_task.reminder_at and due_time:
+        new_task.reminder_at = merge_date_time(due_at, due_time)
     if new_task.reminder_at:
         new_task.reminder_sent = False
 
     db.session.add(new_task)
     db.session.commit()
 
+    detail_parts = [f"id={new_task.id}", f"title={new_task.title}"]
+    if new_task.due_time:
+        detail_parts.append(f"due_time={new_task.due_time.strftime('%H:%M')}")
+    log_activity(user_id, "task_created", ", ".join(detail_parts))
     print(f"Task created: {new_task.title} (ID: {new_task.id})")
     return jsonify(new_task.to_dict()), 201
 
@@ -140,6 +173,8 @@ def update_task(task_id):
         task.emotion_applied = normalize_emotion_label(data.get('emotion_applied'))
     if 'due_at' in data:
         task.due_at = parse_datetime(data.get('due_at'))
+    if 'due_time' in data:
+        task.due_time = parse_time(data.get('due_time'))
     if 'reminder_at' in data:
         task.reminder_at = parse_datetime(data.get('reminder_at'))
         task.reminder_sent = False if task.reminder_at else task.reminder_sent
@@ -154,8 +189,13 @@ def update_task(task_id):
             return jsonify({'error': 'Invalid reminder_phone. Enter local digits with country code, or full E.164'}), 400
         task.reminder_phone = reminder_phone
 
+    if not task.reminder_at and task.due_time:
+        task.reminder_at = merge_date_time(task.due_at, task.due_time)
+        task.reminder_sent = False if task.reminder_at else task.reminder_sent
+
     db.session.commit()
 
+    log_activity(user_id, "task_updated", f"id={task.id}, title={task.title}")
     print(f"Task updated: {task.title} (ID: {task_id})")
     return jsonify(task.to_dict()), 200
 
@@ -193,6 +233,7 @@ def toggle_task_complete(task_id):
     db.session.commit()
 
     status = 'completed' if task.completed else 'pending'
+    log_activity(user_id, "task_updated", f"id={task.id}, status={status}, title={task.title}")
     print(f"Task marked as {status}: {task.title}")
     return jsonify(task.to_dict()), 200
 
@@ -219,6 +260,7 @@ def log_emotion():
     db.session.add(emotion_log)
     db.session.commit()
 
+    log_activity(user_id, "emotion_log", f"emotion={emotion_log.emotion}, confidence={emotion_log.confidence}")
     return jsonify(emotion_log.to_dict()), 201
 
 
@@ -257,6 +299,11 @@ def emotion_scan():
     db.session.add(emotion_log)
     db.session.commit()
 
+    log_activity(
+        user_id,
+        "emotion_scan",
+        f"emotion={emotion_result['emotion']}, confidence={emotion_result['confidence']}",
+    )
     return jsonify(emotion_result), 200
 
 

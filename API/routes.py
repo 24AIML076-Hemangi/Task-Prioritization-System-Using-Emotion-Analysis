@@ -21,13 +21,14 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import db
 from models import User
+from Backend.activity_logger import log_activity
 from google_oauth import (
     build_auth_url,
     config_ready,
     exchange_code_for_tokens,
     fetch_google_email,
 )
-from notifications import send_sms
+from notifications import send_sms, send_email, build_welcome_content
 
 # Blueprint
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -111,14 +112,15 @@ def signup():
     """Register a new user"""
     data = request.get_json() or {}
     email = data.get("email", "").strip().lower()
+    username = data.get("username", "").strip()
     password = data.get("password", "")
     raw_phone = str(data.get("phone", "")).strip()
     phone_country = str(data.get("phone_country", DEFAULT_PHONE_COUNTRY)).strip() or DEFAULT_PHONE_COUNTRY
     phone = normalize_phone(raw_phone, phone_country)
     notification_preference = (data.get("notification_preference", "email") or "email").strip().lower()
 
-    if not email or not password:
-        return jsonify({"error": "Email and password required"}), 400
+    if not email or not password or not username:
+        return jsonify({"error": "Email, username, and password required"}), 400
 
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return jsonify({"error": "Invalid email format"}), 400
@@ -136,8 +138,11 @@ def signup():
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
         return jsonify({"error": "Email already registered"}), 400
+    existing_username = User.query.filter_by(username=username).first()
+    if existing_username:
+        return jsonify({"error": "Username already taken"}), 400
 
-    new_user = User(email=email, phone=phone, notification_preference=notification_preference)
+    new_user = User(email=email, username=username, phone=phone, notification_preference=notification_preference)
     new_user.set_password(password)
 
     db.session.add(new_user)
@@ -152,20 +157,39 @@ def signup():
 def login():
     """Authenticate user and return JWT tokens"""
     data = request.get_json() or {}
-    email = data.get("email", "").strip().lower()
+    identifier = (data.get("email") or data.get("username") or data.get("identifier") or "").strip()
     password = data.get("password", "")
 
-    if not email or not password:
-        return jsonify({"error": "Email and password required"}), 400
+    if not identifier or not password:
+        return jsonify({"error": "Email/username and password required"}), 400
 
-    user = User.query.filter_by(email=email).first()
-    if not user or not user.check_password(password):
-        return jsonify({"error": "Invalid email or password"}), 401
+    if "@" in identifier:
+        login_method = "email"
+        user = User.query.filter_by(email=identifier.lower()).first()
+    else:
+        login_method = "username"
+        user = User.query.filter_by(username=identifier).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if not user.check_password(password):
+        return jsonify({"error": "Invalid password"}), 401
 
     access_token = create_access_token(identity=user.email)
     refresh_token = create_refresh_token(identity=user.email)
 
-    print(f"User logged in: {email}")
+    log_activity(user.email, "login", f"method={login_method}")
+    print(f"User logged in: {user.email}")
+    try:
+        now = datetime.utcnow()
+        last_sent = user.last_welcome_sent_at
+        should_send = not last_sent or last_sent.date() != now.date()
+        if should_send:
+            subject, body = build_welcome_content(user.email)
+            if send_email(user.email, subject, body, owner_email=user.email):
+                user.last_welcome_sent_at = now
+                db.session.commit()
+    except Exception as exc:
+        print(f"[welcome-email] Failed to send: {exc}")
     return jsonify({
         "message": "Login successful",
         "user": user.to_dict(),

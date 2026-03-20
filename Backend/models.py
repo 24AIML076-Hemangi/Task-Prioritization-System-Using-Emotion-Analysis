@@ -12,6 +12,7 @@ class User(db.Model):
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=True, index=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(30), nullable=True)
@@ -23,6 +24,7 @@ class User(db.Model):
     gmail_token_expiry = db.Column(db.DateTime, nullable=True)
     gmail_scope = db.Column(db.Text, nullable=True)
     last_empty_nudge_at = db.Column(db.DateTime, nullable=True)
+    last_welcome_sent_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -47,12 +49,14 @@ class User(db.Model):
         """Convert user to dictionary for JSON response (exclude password)"""
         return {
             'id': self.id,
+            'username': self.username,
             'email': self.email,
             'phone': self.phone,
             'notification_preference': self.notification_preference,
             'gmail_connected': bool(self.gmail_connected and self.gmail_refresh_token),
             'gmail_email': self.gmail_email,
             'last_empty_nudge_at': self.last_empty_nudge_at.isoformat() if self.last_empty_nudge_at else None,
+            'last_welcome_sent_at': self.last_welcome_sent_at.isoformat() if self.last_welcome_sent_at else None,
             'created_at': self.created_at.isoformat()
         }
     
@@ -72,6 +76,7 @@ class Task(db.Model):
     completed = db.Column(db.Boolean, default=False)
     emotion_applied = db.Column(db.String(50), default=None)  # 'stressed', 'focused', 'neutral'
     due_at = db.Column(db.DateTime, default=None)
+    due_time = db.Column(db.Time, default=None)
     reminder_at = db.Column(db.DateTime, default=None)
     reminder_method = db.Column(db.String(20), default=None)  # 'email' | 'sms' | 'both'
     reminder_sent = db.Column(db.Boolean, default=False)
@@ -91,6 +96,7 @@ class Task(db.Model):
             'completed': self.completed,
             'emotion_applied': self.emotion_applied,
             'due_at': self.due_at.isoformat() if self.due_at else None,
+            'due_time': self.due_time.strftime('%H:%M') if self.due_time else None,
             'reminder_at': self.reminder_at.isoformat() if self.reminder_at else None,
             'reminder_method': self.reminder_method,
             'reminder_sent': self.reminder_sent,
@@ -125,3 +131,26 @@ class EmotionLog(db.Model):
     
     def __repr__(self):
         return f'<EmotionLog {self.id}: {self.emotion} ({self.confidence})>'
+
+
+class UserActivityLog(db.Model):
+    """Audit log for user activity (file + DB)"""
+    __tablename__ = 'user_activity_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_email = db.Column(db.String(120), nullable=True, index=True)
+    action = db.Column(db.String(120), nullable=False)
+    details = db.Column(db.Text, nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_email': self.user_email,
+            'action': self.action,
+            'details': self.details,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+        }
+
+    def __repr__(self):
+        return f'<UserActivityLog {self.id}: {self.user_email} {self.action}>'

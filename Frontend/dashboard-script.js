@@ -159,13 +159,14 @@ class TaskManager {
         }
     }
 
-    async createTask(title, dueAtLocal = null) {
+    async createTask(title, dueAtLocal = null, dueTimeLocal = null) {
         try {
             const payload = {
                 title: title.trim(),
                 importance: 'not-important',
                 urgency: 'not-urgent',
                 due_at: dueAtLocal,
+                due_time: dueTimeLocal,
             };
             
             console.log('📝 Creating task:', payload);
@@ -504,6 +505,7 @@ class TaskManager {
 
     renderTaskItem(task, isRecommended = false) {
         const text = task.title || task.text;
+        const timeLabel = this.formatDueTimeLabel(task?.due_time);
         const matrix = this.getMatrixClass(task);
         const checked = task.completed ? 'checked' : '';
         const list = this.getTaskList(task.id);
@@ -518,7 +520,7 @@ class TaskManager {
             <div class="task-item ${task.completed ? 'completed' : ''} ${matrix} ${recommendedClass}" data-id="${task.id}">
                 <input type="checkbox" class="task-checkbox" ${checked} />
                 <div class="task-main">
-                    <span class="task-name">${this.escape(text)}</span>
+                    <span class="task-name">${this.escape(text)}${timeLabel}</span>
                     ${dueMeta ? `<span class="task-meta ${dueMeta.overdue ? 'overdue' : ''}">${this.escape(dueMeta.label)}</span>` : ''}
                     ${recommendedBadge}
                     ${splitHint}
@@ -548,6 +550,19 @@ class TaskManager {
                 </div>
             </div>
         `;
+    }
+
+    formatDueTimeLabel(dueTime) {
+        const raw = String(dueTime || '').trim();
+        if (!raw) return '';
+        const normalized = raw.length >= 5 ? raw.slice(0, 5) : raw;
+        return ` (${this.escape(normalized)})`;
+    }
+
+    formatDueTimeValue(dueTime) {
+        const raw = String(dueTime || '').trim();
+        if (!raw) return '';
+        return raw.length >= 5 ? raw.slice(0, 5) : raw;
     }
 
     getRecommendedTaskIds(activeTasks) {
@@ -945,12 +960,18 @@ class TaskManager {
         const dueValue = due ? this.toLocalInputValue(due) : '';
         const reminderValue = reminder ? this.toLocalInputValue(reminder) : '';
         const defaultMethod = task.reminder_method || (this.userProfile?.notification_preference || '');
+        const dueTimeValue = this.formatDueTimeValue(task?.due_time);
 
         content.innerHTML = `
             <div class="detail-row">
                 <div class="detail-label">Title</div>
                 <div class="detail-value">${this.escape(task.title || '')}</div>
             </div>
+            ${dueTimeValue ? `
+            <div class="detail-row">
+                <div class="detail-label">Time</div>
+                <div class="detail-value">${this.escape(dueTimeValue)}</div>
+            </div>` : ''}
             <div class="detail-form">
                 <label>Due date</label>
                 <input type="datetime-local" id="detailDue" value="${dueValue}" />
@@ -1469,15 +1490,18 @@ class TaskManager {
         // Add task
         const input = document.getElementById('taskInput');
         const dueInput = document.getElementById('taskDueInput');
+        const timeInput = document.getElementById('taskTimeInput');
         input.addEventListener('keypress', async (e) => {
             if (e.key === 'Enter' && input.value.trim()) {
                 const dueAtLocal = dueInput?.value || null;
-                const task = await this.createTask(input.value, dueAtLocal);
+                const dueTimeLocal = timeInput?.value || null;
+                const task = await this.createTask(input.value, dueAtLocal, dueTimeLocal);
                 if (task) {
                     this.tasks.unshift(task);
                     this.renderTasks();
                     input.value = '';
                     if (dueInput) dueInput.value = '';
+                    if (timeInput) timeInput.value = '';
                     this.generateCalendar();
                 }
             }

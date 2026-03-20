@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import database
 from database import db
-from models import User, Task, EmotionLog
+from models import User, Task, EmotionLog, UserActivityLog
 
 # Resolve frontend directory and serve it from Flask so one server can host API + UI
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,9 +56,11 @@ CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 # Import and register routes
 from API.routes import auth_bp
 from task_routes import task_bp
+from log_routes import logs_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(task_bp)
+app.register_blueprint(logs_bp)
 
 
 @jwt.expired_token_loader
@@ -237,9 +239,10 @@ def sync_sqlite_to_postgres_if_enabled():
                 conn.execute(
                     text(
                         """
-                        INSERT INTO users (id, email, password_hash, phone, notification_preference, created_at, updated_at)
-                        VALUES (:id, :email, :password_hash, :phone, :notification_preference, :created_at, :updated_at)
+                        INSERT INTO users (id, username, email, password_hash, phone, notification_preference, created_at, updated_at)
+                        VALUES (:id, :username, :email, :password_hash, :phone, :notification_preference, :created_at, :updated_at)
                         ON CONFLICT (email) DO UPDATE SET
+                            username = EXCLUDED.username,
                             password_hash = EXCLUDED.password_hash,
                             phone = EXCLUDED.phone,
                             notification_preference = EXCLUDED.notification_preference,
@@ -248,6 +251,7 @@ def sync_sqlite_to_postgres_if_enabled():
                     ),
                     {
                         "id": row["id"],
+                        "username": _sqlite_row_value(row, "username"),
                         "email": row["email"],
                         "password_hash": row["password_hash"],
                         "phone": _sqlite_row_value(row, "phone"),
@@ -266,11 +270,13 @@ def sync_sqlite_to_postgres_if_enabled():
                         """
                         INSERT INTO tasks (
                             id, user_id, title, importance, urgency, completed, emotion_applied,
+                            due_time,
                             due_at, reminder_at, reminder_method, reminder_sent, reminder_last_sent_at, reminder_phone,
                             created_at, updated_at
                         )
                         VALUES (
                             :id, :user_id, :title, :importance, :urgency, :completed, :emotion_applied,
+                            :due_time,
                             :due_at, :reminder_at, :reminder_method, :reminder_sent, :reminder_last_sent_at, :reminder_phone,
                             :created_at, :updated_at
                         )
@@ -281,6 +287,7 @@ def sync_sqlite_to_postgres_if_enabled():
                             urgency = EXCLUDED.urgency,
                             completed = EXCLUDED.completed,
                             emotion_applied = EXCLUDED.emotion_applied,
+                            due_time = EXCLUDED.due_time,
                             due_at = EXCLUDED.due_at,
                             reminder_at = EXCLUDED.reminder_at,
                             reminder_method = EXCLUDED.reminder_method,
@@ -298,6 +305,7 @@ def sync_sqlite_to_postgres_if_enabled():
                         "urgency": _sqlite_row_value(row, "urgency", "not-urgent"),
                         "completed": bool(_sqlite_row_value(row, "completed", 0)),
                         "emotion_applied": _sqlite_row_value(row, "emotion_applied"),
+                        "due_time": _sqlite_row_value(row, "due_time"),
                         "due_at": _sqlite_row_value(row, "due_at"),
                         "reminder_at": _sqlite_row_value(row, "reminder_at"),
                         "reminder_method": _sqlite_row_value(row, "reminder_method"),
@@ -365,6 +373,9 @@ with app.app_context():
     if 'users' in inspector.get_table_names():
         user_columns = {c['name'] for c in inspector.get_columns('users')}
         user_alters = []
+        datetime_type = "TIMESTAMP" if db.engine.dialect.name == "postgresql" else "DATETIME"
+        if 'username' not in user_columns:
+            user_alters.append("ALTER TABLE users ADD COLUMN username VARCHAR(80)")
         if 'phone' not in user_columns:
             user_alters.append("ALTER TABLE users ADD COLUMN phone VARCHAR(30)")
         if 'notification_preference' not in user_columns:
@@ -378,34 +389,58 @@ with app.app_context():
         if 'gmail_refresh_token' not in user_columns:
             user_alters.append("ALTER TABLE users ADD COLUMN gmail_refresh_token TEXT")
         if 'gmail_token_expiry' not in user_columns:
-            user_alters.append("ALTER TABLE users ADD COLUMN gmail_token_expiry DATETIME")
+            user_alters.append(f"ALTER TABLE users ADD COLUMN gmail_token_expiry {datetime_type}")
         if 'gmail_scope' not in user_columns:
             user_alters.append("ALTER TABLE users ADD COLUMN gmail_scope TEXT")
         if 'last_empty_nudge_at' not in user_columns:
-            user_alters.append("ALTER TABLE users ADD COLUMN last_empty_nudge_at DATETIME")
+            user_alters.append(f"ALTER TABLE users ADD COLUMN last_empty_nudge_at {datetime_type}")
+        if 'last_welcome_sent_at' not in user_columns:
+            user_alters.append(f"ALTER TABLE users ADD COLUMN last_welcome_sent_at {datetime_type}")
         for stmt in user_alters:
             db.session.execute(text(stmt))
         if user_alters:
             db.session.commit()
+        db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_username_uq ON users (username)"))
+        db.session.commit()
 
     if 'tasks' in inspector.get_table_names():
         columns = {c['name'] for c in inspector.get_columns('tasks')}
         alters = []
+        datetime_type = "TIMESTAMP" if db.engine.dialect.name == "postgresql" else "DATETIME"
         if 'due_at' not in columns:
-            alters.append("ALTER TABLE tasks ADD COLUMN due_at DATETIME")
+            alters.append(f"ALTER TABLE tasks ADD COLUMN due_at {datetime_type}")
+        if 'due_time' not in columns:
+            alters.append("ALTER TABLE tasks ADD COLUMN due_time TIME")
         if 'reminder_at' not in columns:
-            alters.append("ALTER TABLE tasks ADD COLUMN reminder_at DATETIME")
+            alters.append(f"ALTER TABLE tasks ADD COLUMN reminder_at {datetime_type}")
         if 'reminder_method' not in columns:
             alters.append("ALTER TABLE tasks ADD COLUMN reminder_method VARCHAR(20)")
         if 'reminder_sent' not in columns:
             alters.append(f"ALTER TABLE tasks ADD COLUMN reminder_sent BOOLEAN DEFAULT {bool_default}")
         if 'reminder_last_sent_at' not in columns:
-            alters.append("ALTER TABLE tasks ADD COLUMN reminder_last_sent_at DATETIME")
+            alters.append(f"ALTER TABLE tasks ADD COLUMN reminder_last_sent_at {datetime_type}")
         if 'reminder_phone' not in columns:
             alters.append("ALTER TABLE tasks ADD COLUMN reminder_phone VARCHAR(30)")
         for stmt in alters:
             db.session.execute(text(stmt))
         if alters:
+            db.session.commit()
+
+    if 'user_activity_logs' in inspector.get_table_names():
+        log_columns = {c['name'] for c in inspector.get_columns('user_activity_logs')}
+        log_alters = []
+        datetime_type = "TIMESTAMP" if db.engine.dialect.name == "postgresql" else "DATETIME"
+        if 'user_email' not in log_columns:
+            log_alters.append("ALTER TABLE user_activity_logs ADD COLUMN user_email VARCHAR(120)")
+        if 'action' not in log_columns:
+            log_alters.append("ALTER TABLE user_activity_logs ADD COLUMN action VARCHAR(120)")
+        if 'details' not in log_columns:
+            log_alters.append("ALTER TABLE user_activity_logs ADD COLUMN details TEXT")
+        if 'timestamp' not in log_columns:
+            log_alters.append(f"ALTER TABLE user_activity_logs ADD COLUMN timestamp {datetime_type}")
+        for stmt in log_alters:
+            db.session.execute(text(stmt))
+        if log_alters:
             db.session.commit()
     sync_sqlite_to_postgres_if_enabled()
     print("Database initialized successfully!")

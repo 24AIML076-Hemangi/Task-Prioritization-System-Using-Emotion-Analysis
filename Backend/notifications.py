@@ -4,6 +4,9 @@ Falls back to console output if providers are not configured.
 """
 import os
 import smtplib
+import json
+import urllib.request
+import urllib.error
 import random
 import re
 from email.mime.text import MIMEText
@@ -44,31 +47,36 @@ def send_email(to_email, subject, body, owner_email=None):
     if _send_with_user_gmail(owner_email, to_email, subject, body):
         return True
 
-    provider = os.getenv("EMAIL_PROVIDER", "smtp").lower()
-
-    if provider == "sendgrid":
+    # Prefer Postmark if configured
+    postmark_key = os.getenv("POSTMARK_API_KEY")
+    postmark_from = os.getenv("POSTMARK_FROM") or os.getenv("SMTP_FROM")
+    if postmark_key and postmark_from:
+        payload = {
+            "From": postmark_from,
+            "To": to_email,
+            "Subject": subject,
+            "TextBody": body,
+        }
+        req = urllib.request.Request(
+            "https://api.postmarkapp.com/email",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Postmark-Server-Token": postmark_key,
+            },
+            method="POST",
+        )
         try:
-            from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return 200 <= resp.getcode() < 300
+        except urllib.error.HTTPError as exc:
+            print(f"[email] Postmark HTTP error: {exc.code}")
+            return False
         except Exception as exc:
-            print(f"[email] SendGrid not available: {exc}")
-            return _mock_email(to_email, subject, body)
-
-        api_key = os.getenv("SENDGRID_API_KEY")
-        from_email = os.getenv("SENDGRID_FROM")
-        if not api_key or not from_email:
-            return _mock_email(to_email, subject, body)
-
-        message = Mail(from_email=from_email, to_emails=to_email, subject=subject, plain_text_content=body)
-        try:
-            client = SendGridAPIClient(api_key)
-            client.send(message)
-            return True
-        except Exception as exc:
-            print(f"[email] SendGrid error: {exc}")
+            print(f"[email] Postmark error: {exc}")
             return False
 
-    # Default: SMTP
+    # Fallback: SMTP (if Postmark not configured)
     host = os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER")
     port = int(os.getenv("SMTP_PORT", "587"))
     user = os.getenv("SMTP_USER") or os.getenv("SENDER_EMAIL")
@@ -177,18 +185,51 @@ def build_sms_reminder_content(task_title, importance=None, urgency=None, is_dai
 def build_empty_nudge_content(user_email=None, is_daily=True):
     name = _display_name_from_email(user_email)
     daily_tag = "Daily Check-in" if is_daily else "Check-in"
-    openers = [
-        f"Hello {name} 👋, hope your day is going well.",
+    is_weekend = False
+    try:
+        is_weekend = datetime.utcnow().weekday() >= 5
+    except Exception:
+        is_weekend = False
+
+    weekday_openers = [
+        f"Hello {name} 👋, aaj ka focus reset karte hain.",
         f"Hi {name} 🌤️, quick check-in from TaskPrioritize.",
-        f"Hey {name} 🙌, sending a gentle nudge.",
+        f"Hey {name} 🙌, small nudge to plan your day.",
     ]
-    nudges = [
-        "I couldn't find any tasks for today. Are you really free?",
-        "No tasks found yet. If you're free, enjoy it — or add a task to stay on track.",
-        "Looks like your list is empty. Want to add something small for momentum?",
+    weekday_nudges = [
+        "Aaj koi task nahi मिला. Ek छोटा task add karoge?",
+        "List empty है — ek quick win डालो, flow banega.",
+        "No tasks today. Ek 10‑minute task se momentum shuru ho सकता है.",
     ]
-    subject = f"{daily_tag}: Are you really free? 📋"
-    body = f"{random.choice(openers)}\n\n{random.choice(nudges)}"
+
+    weekend_openers = [
+        f"Hello {name} 👋, weekend vibe on?",
+        f"Hi {name} ☀️, weekend check-in from TaskPrioritize.",
+        f"Hey {name} 🙌, weekend plan set karte hain.",
+    ]
+    weekend_nudges = [
+        "Weekend tasks empty हैं. Thoda planning kar lo — Monday smooth रहेगा.",
+        "No weekend tasks yet. Ek छोटा personal plan add karoge?",
+        "Weekend free? Enjoy, ya ek हल्का task डालो for balance.",
+    ]
+
+    subject = f"{daily_tag}: Weekend plan? 📅" if is_weekend else f"{daily_tag}: Are you really free? 📋"
+    if is_weekend:
+        body = f"{random.choice(weekend_openers)}\n\n{random.choice(weekend_nudges)}"
+    else:
+        body = f"{random.choice(weekday_openers)}\n\n{random.choice(weekday_nudges)}"
+    return subject, body
+
+
+def build_welcome_content(user_email=None):
+    name = _display_name_from_email(user_email)
+    subject = "Welcome to Task Prioritization System 🚀"
+    body = (
+        f"Hi {name}, welcome back to Task Prioritization System!\n\n"
+        "You're ready to add new tasks and keep your day on track. "
+        "Start with one small task and build momentum.\n\n"
+        "If you need reminders, set a due time and we'll nudge you."
+    )
     return subject, body
 
 

@@ -1293,7 +1293,20 @@ class TaskManager {
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0);
 
-        const base64 = canvas.toDataURL('image/jpeg').split(',')[1];
+        // Crop a tighter, centered square to improve face detection reliability.
+        const w = video.videoWidth;
+        const h = video.videoHeight;
+        const side = Math.min(w, h);
+        const cropSize = Math.max(80, Math.round(side * 0.72));
+        const sx = Math.max(0, Math.round((w - cropSize) / 2));
+        const sy = Math.max(0, Math.round((h - cropSize) / 2));
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = 224;
+        cropCanvas.height = 224;
+        const cropCtx = cropCanvas.getContext('2d');
+        cropCtx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, cropCanvas.width, cropCanvas.height);
+
+        const base64 = cropCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
 
         let timeoutId = null;
         try {
@@ -1380,8 +1393,22 @@ class TaskManager {
 
         document.getElementById('resultIcon').textContent = display.icon;
         document.getElementById('resultEmotion').textContent = display.label;
-        document.getElementById('resultConfidence').textContent = Math.round((result.confidence || 0) * 100);
-        document.getElementById('resultMessage').textContent = display.message;
+        const confidencePct = Math.round((result.confidence || 0) * 100);
+        document.getElementById('resultConfidence').textContent = confidencePct;
+        const confidenceFill = document.getElementById('confidenceFill');
+        const confidenceBar = document.getElementById('confidenceBar');
+        if (confidenceFill) {
+            confidenceFill.style.width = `${Math.min(100, Math.max(0, confidencePct))}%`;
+        }
+        if (confidenceBar) {
+            confidenceBar.setAttribute('aria-valuenow', String(Math.min(100, Math.max(0, confidencePct))));
+        }
+        const debugSource = result && result.debug ? result.debug.source : null;
+        const customMessage = result && result.message ? String(result.message) : '';
+        const finalMessage = customMessage && debugSource && debugSource !== 'deepface'
+            ? customMessage
+            : display.message;
+        document.getElementById('resultMessage').textContent = finalMessage;
         this.renderEmotionDebug(result);
 
         // Show result modal

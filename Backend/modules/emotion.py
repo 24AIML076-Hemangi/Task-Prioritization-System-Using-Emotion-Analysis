@@ -89,8 +89,50 @@ def detect_emotion_from_image(base64_image):
         image = Image.open(BytesIO(image_data)).convert("RGB")
         img_array = np.array(image)
 
+        # Try to extract the best face first; this avoids "neutral" outputs when the
+        # full frame contains a small or partially visible face.
+        faces = []
+        try:
+            faces = DeepFace.extract_faces(
+                img_array,
+                detector_backend="retinaface",
+                enforce_detection=False,
+                align=True,
+            )
+        except Exception:
+            faces = []
+
+        best_face = None
+        best_face_area = 0
+        if isinstance(faces, list):
+            for face in faces:
+                area = 0
+                facial_area = face.get("facial_area") or {}
+                w = facial_area.get("w") or facial_area.get("width") or 0
+                h = facial_area.get("h") or facial_area.get("height") or 0
+                area = float(w) * float(h)
+                if area > best_face_area:
+                    best_face_area = area
+                    best_face = face
+
+        if not best_face or best_face_area <= 0:
+            return {
+                "emotion": EMOTION_NEUTRAL,
+                "confidence": 0.4,
+                "message": "No face detected. Move closer and keep your face centered.",
+                "debug": {
+                    "source": "no_face",
+                    "dominant_emotion": EMOTION_NEUTRAL,
+                    "scores": {},
+                },
+            }
+
+        face_img = best_face.get("face") if isinstance(best_face, dict) else None
+        if face_img is None:
+            face_img = img_array
+
         analysis = DeepFace.analyze(
-            img_array,
+            face_img,
             actions=["emotion"],
             enforce_detection=False,
             detector_backend="retinaface",
@@ -112,12 +154,16 @@ def detect_emotion_from_image(base64_image):
 
         confidence = max(0.0, min(1.0, round(float(raw_conf) / 100.0, 2)))
 
-        # If happy is close to the top score, treat it as focused to reduce mislabels.
+        # If a target emotion is close to the top score, prefer it to avoid neutral bias.
         if scores:
-            happy_score = float(scores.get("happy", 0.0))
             top_score = float(scores.get(best_raw_emotion, 0.0))
-            if best_raw_emotion not in {"happy", "surprise"} and happy_score >= 20 and (top_score - happy_score) <= 5:
-                best_raw_emotion = "happy"
+            sad_score = float(scores.get("sad", 0.0))
+            if best_raw_emotion != "sad" and sad_score >= 20 and (top_score - sad_score) <= 5:
+                best_raw_emotion = "sad"
+            else:
+                happy_score = float(scores.get("happy", 0.0))
+                if best_raw_emotion not in {"happy", "surprise"} and happy_score >= 20 and (top_score - happy_score) <= 5:
+                    best_raw_emotion = "happy"
 
         emotion = map_deepface_emotion(best_raw_emotion or dominant)
 
@@ -130,6 +176,7 @@ def detect_emotion_from_image(base64_image):
                 "dominant_emotion": dominant,
                 "best_emotion": best_raw_emotion,
                 "scores": scores,
+                "face_area": best_face_area,
             },
         }
 

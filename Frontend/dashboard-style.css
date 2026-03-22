@@ -1179,6 +1179,7 @@ body {
     object-fit: cover;
 }
 
+
 .status-text {
     text-align: center;
     color: var(--text-muted);
@@ -1234,6 +1235,23 @@ body {
 .confidence-text {
     font-weight: 500;
     color: var(--text);
+}
+
+.confidence-bar {
+    width: min(260px, 80%);
+    height: 8px;
+    margin: 6px auto 2px;
+    background: linear-gradient(90deg, rgba(80, 120, 255, 0.15), rgba(255, 128, 128, 0.12));
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.confidence-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, rgba(79, 131, 255, 0.9), rgba(86, 205, 173, 0.9));
+    transition: width 240ms ease;
 }
 
 .emotion-debug {

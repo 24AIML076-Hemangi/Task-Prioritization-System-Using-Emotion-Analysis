@@ -28,9 +28,22 @@ load_dotenv(os.path.join(project_root, ".env"))
 app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 
 # SQLite Database Configuration
+# Database Configuration (Render + Local Support)
 basedir = os.path.abspath(os.path.dirname(__file__))
-database_url = os.getenv("DATABASE_URL", f'sqlite:///{os.path.join(basedir, "tasks.db")}')
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if DATABASE_URL:
+    # Fix for Render postgres:// issue
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+    print("✅ Using Render PostgreSQL")
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "tasks.db")}'
+    print("⚠️ Using Local SQLite")
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-change-me')
@@ -199,10 +212,10 @@ def dispatch_all_due_reminders():
 
         db.session.commit()
 
-
 def _is_postgres_url(url):
+    if not url:
+        return False
     return url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://")
-
 
 def _sqlite_row_value(row, key, default=None):
     keys = row.keys()
@@ -211,7 +224,7 @@ def _sqlite_row_value(row, key, default=None):
 
 def sync_sqlite_to_postgres_if_enabled():
     """Copy SQLite data into PostgreSQL with idempotent upserts."""
-    if not _is_postgres_url(database_url):
+    if not _is_postgres_url(app.config['SQLALCHEMY_DATABASE_URI']):
         return
 
     if os.getenv("SQLITE_MIGRATE_ON_STARTUP", "1") != "1":

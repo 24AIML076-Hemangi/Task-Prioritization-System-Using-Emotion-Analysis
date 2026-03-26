@@ -31,7 +31,7 @@ app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 # Database Configuration (Render + Local Support)
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("RENDER_BACKEND_URL")
 
 if DATABASE_URL:
     # Fix for Render postgres:// issue

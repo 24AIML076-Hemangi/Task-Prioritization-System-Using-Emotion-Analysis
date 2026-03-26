@@ -64,7 +64,7 @@ limiter.init_app(app)
 
 # Enable CORS for frontend communication
 allowed_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5000").split(",") if o.strip()]
-CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
+CORS(app)
 
 # Import and register routes
 from API.routes import auth_bp

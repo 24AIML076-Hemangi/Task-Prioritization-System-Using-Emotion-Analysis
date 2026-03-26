@@ -380,7 +380,11 @@ def sync_sqlite_to_postgres_if_enabled():
 
 # Create database tables on startup
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+        print("✅ DB connected")
+    except Exception as e:
+        print("❌ DB error:", e)
     inspector = inspect(db.engine)
     bool_default = "FALSE" if db.engine.dialect.name == "postgresql" else "0"
     if 'users' in inspector.get_table_names():

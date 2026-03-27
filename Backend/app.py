@@ -27,22 +27,35 @@ load_dotenv(os.path.join(project_root, ".env"))
 # Initialize Flask app
 app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 
-# SQLite Database Configuration
 # Database Configuration (Render + Local Support)
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-DATABASE_URL = os.getenv("RENDER_BACKEND_URL")
-
-if DATABASE_URL:
+def _normalize_postgres_url(url):
+    if not url:
+        return None
     # Fix for Render postgres:// issue
-    if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
 
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-    print("✅ Using Render PostgreSQL")
-else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "tasks.db")}'
+def _get_env_mode():
+    # Prefer explicit FLASK_ENV, otherwise fall back to ENV for Render-style setups
+    return (os.getenv("FLASK_ENV") or os.getenv("ENV") or "").strip().lower()
+
+def _sqlite_uri():
+    return f'sqlite:///{os.path.join(basedir, "tasks.db")}'
+
+def _configure_database():
+    env_mode = _get_env_mode()
+    render_url = _normalize_postgres_url(os.getenv("RENDER_BACKEND_URL"))
+
+    if render_url and env_mode == "production":
+        app.config['SQLALCHEMY_DATABASE_URI'] = render_url
+        print("✅ Using Render PostgreSQL (production)")
+        return
+
+    app.config['SQLALCHEMY_DATABASE_URI'] = _sqlite_uri()
     print("⚠️ Using Local SQLite")
+
+_configure_database()
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False
@@ -385,6 +398,17 @@ with app.app_context():
         print("✅ DB connected")
     except Exception as e:
         print("❌ DB error:", e)
+        # Safe fallback: if Postgres fails (e.g., local DNS/Internet), fall back to SQLite.
+        if _get_env_mode() != "production" and _is_postgres_url(app.config.get("SQLALCHEMY_DATABASE_URI")):
+            fallback_uri = _sqlite_uri()
+            app.config['SQLALCHEMY_DATABASE_URI'] = fallback_uri
+            db.engine.dispose()
+            try:
+                db.create_all()
+                print("⚠️ Falling back to Local SQLite after Postgres failure")
+            except Exception as fallback_error:
+                print("❌ SQLite fallback failed:", fallback_error)
+                raise
     inspector = inspect(db.engine)
     bool_default = "FALSE" if db.engine.dialect.name == "postgresql" else "0"
     if 'users' in inspector.get_table_names():

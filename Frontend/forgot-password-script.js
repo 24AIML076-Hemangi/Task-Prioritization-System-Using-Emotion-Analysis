@@ -1,3 +1,7 @@
+const BASE_URL = window.location.origin;
+
+const API_BASE_URL = `${BASE_URL}/api`;
+
 // State management
 const state = {
     currentStep: 'email', // email -> code -> password -> success
@@ -22,7 +26,7 @@ const successStep = document.getElementById('successStep');
 const loading = document.getElementById('loading');
 
 // API Base URL - adjust based on your backend
-const API_BASE_URL = 'http://localhost:5000/api';
+
 
 // Initialize event listeners
 function initializeEventListeners() {
@@ -182,7 +186,7 @@ async function handlePasswordSubmit(e) {
         const data = await response.json();
 
         if (!response.ok) {
-            passwordError.textContent = data.message || 'Failed to reset password';
+            passwordError.textContent = data.error || data.message || 'Something went wrong' || 'Failed to reset password';
             return;
         }
 

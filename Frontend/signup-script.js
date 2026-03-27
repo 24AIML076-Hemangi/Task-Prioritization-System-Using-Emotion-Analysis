@@ -1,3 +1,5 @@
+const BASE_URL = window.location.origin;
+
 document.getElementById('signupForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
@@ -135,43 +137,41 @@ function submitSignup(fullname, email, username, phone, notificationPreference, 
     signupBtn.textContent = 'Creating Account...';
     
     // Call signup API
-    fetch('http://localhost:5000/api/auth/signup', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            email: email,
-            username: username,
-            password: password,
-            phone: phone || null,
-            notification_preference: notificationPreference || 'email'
-        })
+   fetch(`${BASE_URL}/api/auth/signup`, {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+        email,
+        username,
+        password,
+        phone: phone || null,
+        notification_preference: notificationPreference || 'email'
     })
-    .then(response => response.json())
-    .then(data => {
-        if (data.id) {
-            // Success - user created
-            console.log('✓ Account created:', data);
-            successMessage.textContent = 'Account created successfully! Redirecting to login...';
-            successMessage.classList.add('show');
-            
-            setTimeout(() => {
-                window.location.href = 'login.html';
-            }, 2000);
-        } else {
-            // Error
-            showError('emailError', data.error || 'Account creation failed');
-            signupBtn.disabled = false;
-            signupBtn.textContent = 'Create Account';
-        }
-    })
-    .catch(error => {
-        console.error('❌ Signup error:', error);
-        showError('emailError', 'Server connection failed. Is the backend running?');
-        signupBtn.disabled = false;
-        signupBtn.textContent = 'Create Account';
-    });
+})
+.then(async response => {
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error || 'Signup failed');
+    }
+
+    // ✅ Success
+    console.log('✓ Account created:', data);
+    successMessage.textContent = 'Account created successfully! Redirecting...';
+    successMessage.classList.add('show');
+
+    setTimeout(() => {
+        window.location.href = 'login.html';
+    }, 2000);
+})
+.catch(error => {
+    console.error('❌ Signup error:', error);
+    showError('emailError', error.message);
+    signupBtn.disabled = false;
+    signupBtn.textContent = 'Create Account';
+});
 }
 
 // Password strength indicator

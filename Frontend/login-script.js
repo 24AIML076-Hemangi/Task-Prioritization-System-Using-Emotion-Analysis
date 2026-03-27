@@ -1,6 +1,5 @@
-const API_URL = window.location.hostname === "localhost"
-    ? "http://localhost:5000/api/auth"
-    : `${window.location.origin}/api/auth`;
+const BASE_URL = window.location.origin;
+const API_URL = `${BASE_URL}/api/auth`;
 
 document.getElementById('loginForm').addEventListener('submit', async function(e) {
     e.preventDefault();

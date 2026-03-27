@@ -3,12 +3,14 @@
    Clean, Functional Task Management
    ============================================ */
 
+const BASE_URL = window.location.origin;
+
 class TaskManager {
     constructor() {
         this.tasks = [];
         this.userId = null;
-        this.apiUrl = 'http://localhost:5000/api/tasks';
-        this.authApiUrl = 'http://localhost:5000/api/auth';
+        this.apiUrl = `${BASE_URL}/api/tasks`;
+        this.authApiUrl = `${BASE_URL}/api/auth`;
         this.currentEmotion = null;
         this.cameraStream = null;
         this.calendarMonth = new Date().getMonth();

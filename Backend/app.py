@@ -1,8 +1,7 @@
-from flask import Flask, redirect, jsonify
+from flask import Flask, redirect, jsonify, request
 from flask_cors import CORS
 import os
 import sys
-import sqlite3
 from sqlalchemy import inspect, text
 from dotenv import load_dotenv
 from werkzeug.exceptions import HTTPException
@@ -27,8 +26,7 @@ load_dotenv(os.path.join(project_root, ".env"))
 # Initialize Flask app
 app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 
-# Database Configuration (Render + Local Support)
-basedir = os.path.abspath(os.path.dirname(__file__))
+# Database Configuration (PostgreSQL only)
 
 def _normalize_postgres_url(url):
     if not url:
@@ -36,16 +34,12 @@ def _normalize_postgres_url(url):
     # Fix for Render postgres:// issue
     return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
 
-def _sqlite_uri():
-    return f'sqlite:///{os.path.join(basedir, "tasks.db")}'
+render_url = _normalize_postgres_url(os.getenv("DATABASE_URL"))
+if not render_url:
+    raise RuntimeError("DATABASE_URL is not set. Configure PostgreSQL before starting the server.")
 
-render_url = _normalize_postgres_url(os.getenv("RENDER_BACKEND_URL"))
-if render_url:
-    app.config['SQLALCHEMY_DATABASE_URI'] = render_url
-    print("✅ Using Render PostgreSQL")
-else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = _sqlite_uri()
-    print("⚠️ Using Local SQLite")
+app.config['SQLALCHEMY_DATABASE_URI'] = render_url
+print("✅ Using PostgreSQL")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False
@@ -66,8 +60,12 @@ limiter = Limiter(
 limiter.init_app(app)
 
 # Enable CORS for frontend communication
-allowed_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5000").split(",") if o.strip()]
-CORS(app)
+default_origins = ["http://localhost:5000", "http://localhost:3000"]
+env_origins_raw = os.getenv("CORS_ORIGINS", "")
+env_origins = [o.strip() for o in env_origins_raw.split(",") if o.strip()]
+allowed_origins = list(dict.fromkeys(env_origins + default_origins))
+vercel_origin_regex = r"^https://.*\.vercel\.app$"
+CORS(app, origins=allowed_origins + [vercel_origin_regex], supports_credentials=True)
 
 # Import and register routes
 from API.routes import auth_bp
@@ -111,6 +109,16 @@ def generic_error_handler(e):
 @app.route('/')
 def home():
     return redirect('/login.html')
+
+
+@app.route("/debug/users", methods=["GET"])
+def debug_users():
+    debug_key = os.getenv("DEBUG_KEY", "secret123")
+    if request.headers.get("x-debug-key") != debug_key:
+        return jsonify({"error": "Unauthorized"}), 403
+    users = User.query.order_by(User.id.asc()).all()
+    payload = [user.to_dict() for user in users]
+    return jsonify({"count": len(payload), "users": payload}), 200
 
 
 def dispatch_all_due_reminders():
@@ -215,172 +223,6 @@ def dispatch_all_due_reminders():
 
         db.session.commit()
 
-def _is_postgres_url(url):
-    if not url:
-        return False
-    return url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://")
-
-def _sqlite_row_value(row, key, default=None):
-    keys = row.keys()
-    return row[key] if key in keys else default
-
-
-def sync_sqlite_to_postgres_if_enabled():
-    """Copy SQLite data into PostgreSQL with idempotent upserts."""
-    if not _is_postgres_url(app.config['SQLALCHEMY_DATABASE_URI']):
-        return
-
-    if os.getenv("SQLITE_MIGRATE_ON_STARTUP", "1") != "1":
-        return
-
-    sqlite_path = os.getenv("SQLITE_SOURCE_DB", os.path.join(basedir, "tasks.db"))
-    if not os.path.exists(sqlite_path):
-        print(f"[MIGRATION] SQLite source not found: {sqlite_path}")
-        return
-
-    sqlite_conn = sqlite3.connect(sqlite_path)
-    sqlite_conn.row_factory = sqlite3.Row
-    cur = sqlite_conn.cursor()
-    table_names = {
-        r[0] for r in cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    }
-
-    migrated_counts = {"users": 0, "tasks": 0, "emotion_logs": 0}
-    with db.engine.begin() as conn:
-        if "users" in table_names:
-            users = cur.execute("SELECT * FROM users").fetchall()
-            for row in users:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO users (id, username, email, password_hash, phone, notification_preference, created_at, updated_at)
-                        VALUES (:id, :username, :email, :password_hash, :phone, :notification_preference, :created_at, :updated_at)
-                        ON CONFLICT (email) DO UPDATE SET
-                            username = EXCLUDED.username,
-                            password_hash = EXCLUDED.password_hash,
-                            phone = EXCLUDED.phone,
-                            notification_preference = EXCLUDED.notification_preference,
-                            updated_at = EXCLUDED.updated_at
-                        """
-                    ),
-                    {
-                        "id": row["id"],
-                        "username": _sqlite_row_value(row, "username"),
-                        "email": row["email"],
-                        "password_hash": row["password_hash"],
-                        "phone": _sqlite_row_value(row, "phone"),
-                        "notification_preference": _sqlite_row_value(row, "notification_preference", "email"),
-                        "created_at": _sqlite_row_value(row, "created_at"),
-                        "updated_at": _sqlite_row_value(row, "updated_at"),
-                    },
-                )
-            migrated_counts["users"] = len(users)
-
-        if "tasks" in table_names:
-            tasks = cur.execute("SELECT * FROM tasks").fetchall()
-            for row in tasks:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO tasks (
-                            id, user_id, title, importance, urgency, completed, emotion_applied,
-                            due_time,
-                            due_at, reminder_at, reminder_method, reminder_sent, reminder_last_sent_at, reminder_phone,
-                            created_at, updated_at
-                        )
-                        VALUES (
-                            :id, :user_id, :title, :importance, :urgency, :completed, :emotion_applied,
-                            :due_time,
-                            :due_at, :reminder_at, :reminder_method, :reminder_sent, :reminder_last_sent_at, :reminder_phone,
-                            :created_at, :updated_at
-                        )
-                        ON CONFLICT (id) DO UPDATE SET
-                            user_id = EXCLUDED.user_id,
-                            title = EXCLUDED.title,
-                            importance = EXCLUDED.importance,
-                            urgency = EXCLUDED.urgency,
-                            completed = EXCLUDED.completed,
-                            emotion_applied = EXCLUDED.emotion_applied,
-                            due_time = EXCLUDED.due_time,
-                            due_at = EXCLUDED.due_at,
-                            reminder_at = EXCLUDED.reminder_at,
-                            reminder_method = EXCLUDED.reminder_method,
-                            reminder_sent = EXCLUDED.reminder_sent,
-                            reminder_last_sent_at = EXCLUDED.reminder_last_sent_at,
-                            reminder_phone = EXCLUDED.reminder_phone,
-                            updated_at = EXCLUDED.updated_at
-                        """
-                    ),
-                    {
-                        "id": row["id"],
-                        "user_id": row["user_id"],
-                        "title": row["title"],
-                        "importance": _sqlite_row_value(row, "importance", "not-important"),
-                        "urgency": _sqlite_row_value(row, "urgency", "not-urgent"),
-                        "completed": bool(_sqlite_row_value(row, "completed", 0)),
-                        "emotion_applied": _sqlite_row_value(row, "emotion_applied"),
-                        "due_time": _sqlite_row_value(row, "due_time"),
-                        "due_at": _sqlite_row_value(row, "due_at"),
-                        "reminder_at": _sqlite_row_value(row, "reminder_at"),
-                        "reminder_method": _sqlite_row_value(row, "reminder_method"),
-                        "reminder_sent": bool(_sqlite_row_value(row, "reminder_sent", 0)),
-                        "reminder_last_sent_at": _sqlite_row_value(row, "reminder_last_sent_at"),
-                        "reminder_phone": _sqlite_row_value(row, "reminder_phone"),
-                        "created_at": _sqlite_row_value(row, "created_at"),
-                        "updated_at": _sqlite_row_value(row, "updated_at"),
-                    },
-                )
-            migrated_counts["tasks"] = len(tasks)
-
-        if "emotion_logs" in table_names:
-            logs = cur.execute("SELECT * FROM emotion_logs").fetchall()
-            for row in logs:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO emotion_logs (id, user_id, emotion, confidence, scanned_at)
-                        VALUES (:id, :user_id, :emotion, :confidence, :scanned_at)
-                        ON CONFLICT (id) DO UPDATE SET
-                            user_id = EXCLUDED.user_id,
-                            emotion = EXCLUDED.emotion,
-                            confidence = EXCLUDED.confidence,
-                            scanned_at = EXCLUDED.scanned_at
-                        """
-                    ),
-                    {
-                        "id": row["id"],
-                        "user_id": row["user_id"],
-                        "emotion": row["emotion"],
-                        "confidence": _sqlite_row_value(row, "confidence", 0.0),
-                        "scanned_at": _sqlite_row_value(row, "scanned_at"),
-                    },
-                )
-            migrated_counts["emotion_logs"] = len(logs)
-
-        for table_name in ["users", "tasks", "emotion_logs"]:
-            conn.execute(
-                text(
-                    f"""
-                    SELECT setval(
-                        pg_get_serial_sequence('{table_name}', 'id'),
-                        COALESCE((SELECT MAX(id) FROM {table_name}), 1),
-                        (SELECT COUNT(*) > 0 FROM {table_name})
-                    )
-                    """
-                )
-            )
-
-    sqlite_conn.close()
-    print(
-        "[MIGRATION] SQLite -> PostgreSQL sync complete: "
-        f"users={migrated_counts['users']}, "
-        f"tasks={migrated_counts['tasks']}, "
-        f"emotion_logs={migrated_counts['emotion_logs']}"
-    )
-
-
 # Create database tables on startup
 with app.app_context():
     try:
@@ -396,6 +238,8 @@ with app.app_context():
         datetime_type = "TIMESTAMP" if db.engine.dialect.name == "postgresql" else "DATETIME"
         if 'username' not in user_columns:
             user_alters.append("ALTER TABLE users ADD COLUMN username VARCHAR(80)")
+        if 'full_name' not in user_columns:
+            user_alters.append("ALTER TABLE users ADD COLUMN full_name VARCHAR(200)")
         if 'phone' not in user_columns:
             user_alters.append("ALTER TABLE users ADD COLUMN phone VARCHAR(30)")
         if 'notification_preference' not in user_columns:
@@ -462,7 +306,6 @@ with app.app_context():
             db.session.execute(text(stmt))
         if log_alters:
             db.session.commit()
-    sync_sqlite_to_postgres_if_enabled()
     print("Database initialized successfully!")
 
 scheduler = BackgroundScheduler(daemon=True)

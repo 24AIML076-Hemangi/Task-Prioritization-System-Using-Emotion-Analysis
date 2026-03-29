@@ -3,7 +3,7 @@
    Clean, Functional Task Management
    ============================================ */
 
-const BASE_URL = window.location.origin;
+import { BASE_URL } from "./config.js";
 
 class TaskManager {
     constructor() {

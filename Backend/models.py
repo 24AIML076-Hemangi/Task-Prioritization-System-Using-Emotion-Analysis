@@ -4,7 +4,7 @@ Database models for Task Prioritization System
 from datetime import datetime
 import bcrypt
 from database import db
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 class User(db.Model):
@@ -13,6 +13,7 @@ class User(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=True, index=True)
+    full_name = db.Column(db.String(200), nullable=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(30), nullable=True)
@@ -29,9 +30,8 @@ class User(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def set_password(self, password):
-        """Hash and set the password using bcrypt"""
-        hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-        self.password_hash = hashed.decode("utf-8")
+        """Hash and set the password using werkzeug"""
+        self.password_hash = generate_password_hash(password)
     
     def check_password(self, password):
         """Verify password against hash with backward compatibility"""
@@ -50,6 +50,7 @@ class User(db.Model):
         return {
             'id': self.id,
             'username': self.username,
+            'fullname': self.full_name,
             'email': self.email,
             'phone': self.phone,
             'notification_preference': self.notification_preference,

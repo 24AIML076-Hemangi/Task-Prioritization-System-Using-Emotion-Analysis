@@ -112,12 +112,21 @@ def signup():
     """Register a new user"""
     data = request.get_json() or {}
     email = data.get("email", "").strip().lower()
+    fullname = data.get("fullname", "").strip()
     username = data.get("username", "").strip()
     password = data.get("password", "")
     raw_phone = str(data.get("phone", "")).strip()
     phone_country = str(data.get("phone_country", DEFAULT_PHONE_COUNTRY)).strip() or DEFAULT_PHONE_COUNTRY
     phone = normalize_phone(raw_phone, phone_country)
     notification_preference = (data.get("notification_preference", "email") or "email").strip().lower()
+
+    print("[signup] hit", {
+        "email": email,
+        "username": username,
+        "fullname": fullname,
+        "phone": phone,
+        "notification_preference": notification_preference,
+    })
 
     if not email or not password or not username:
         return jsonify({"error": "Email, username, and password required"}), 400
@@ -142,13 +151,24 @@ def signup():
     if existing_username:
         return jsonify({"error": "Username already taken"}), 400
 
-    new_user = User(email=email, username=username, phone=phone, notification_preference=notification_preference)
+    new_user = User(
+        email=email,
+        username=username,
+        full_name=fullname or None,
+        phone=phone,
+        notification_preference=notification_preference,
+    )
     new_user.set_password(password)
 
-    db.session.add(new_user)
-    db.session.commit()
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        print(f"[signup] stored user: {email}")
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[signup] DB insert failed for {email}: {exc}")
+        return jsonify({"error": "Failed to create user"}), 500
 
-    print(f"User registered: {email}")
     return jsonify(new_user.to_dict()), 201
 
 

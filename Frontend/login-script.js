@@ -1,4 +1,4 @@
-const BASE_URL = window.location.origin;
+import { BASE_URL } from "./config.js";
 const API_URL = `${BASE_URL}/api/auth`;
 
 document.getElementById('loginForm').addEventListener('submit', async function(e) {

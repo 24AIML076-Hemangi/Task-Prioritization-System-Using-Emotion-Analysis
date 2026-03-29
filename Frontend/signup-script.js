@@ -1,4 +1,4 @@
-const BASE_URL = window.location.origin;
+import { BASE_URL } from "./config.js";
 
 document.getElementById('signupForm').addEventListener('submit', function(e) {
     e.preventDefault();
@@ -143,6 +143,7 @@ function submitSignup(fullname, email, username, phone, notificationPreference, 
         'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+        fullname,
         email,
         username,
         password,

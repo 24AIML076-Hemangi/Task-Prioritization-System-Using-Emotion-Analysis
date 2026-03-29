@@ -1,9 +1,47 @@
-emotion_test/Lib/
-*.pyc
-__pycache__/
-tasks.db
-sample_data.csv
+# Frontend
+node_modules/
+dist/
+build/
 
-Data_Storage/tasks.db
-Data_Storage/*.csv
+# Backend
+__pycache__/
+*.pyc
+instance/
+
+# Environment & secrets
 .env
+.env.*
+*.env
+**/*.env
+!.env.example
+
+# Logs
+*.log
+logs.txt
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Database & data files
+*.db
+*.sqlite
+*.csv
+Data_Storage/
+
+# Project-specific extras
+emotion_test/Lib/
+
+# Local tooling artifacts (should not be committed)
+corepack
+corepack.cmd
+install_tools.bat
+node.exe
+nodevars.bat
+npm
+npm.cmd
+npm.ps1
+npx
+npx.cmd
+npx.ps1

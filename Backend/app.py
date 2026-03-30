@@ -26,7 +26,7 @@ load_dotenv(os.path.join(project_root, ".env"))
 # Initialize Flask app
 app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 
-# Database Configuration (PostgreSQL only)
+# Database Configuration (PostgreSQL in production, SQLite locally)
 
 def _normalize_postgres_url(url):
     if not url:
@@ -34,12 +34,20 @@ def _normalize_postgres_url(url):
     # Fix for Render postgres:// issue
     return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
 
-render_url = _normalize_postgres_url(os.getenv("DATABASE_URL"))
-if not render_url:
-    raise RuntimeError("DATABASE_URL is not set. Configure PostgreSQL before starting the server.")
+env_db_url = _normalize_postgres_url(os.getenv("DATABASE_URL"))
+if env_db_url:
+    db_url = env_db_url
+    db_label = "PostgreSQL"
+else:
+    # Local fallback when DATABASE_URL is not set: SQLite file.
+    sqlite_path = os.path.join(project_root, "Backend", "tasks.db")
+    sqlite_path = sqlite_path.replace("\\", "/")
+    db_url = f"sqlite:///{sqlite_path}"
+    db_label = "SQLite"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = render_url
-print("✅ Using PostgreSQL")
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+print("Using DB:", db_url)
+print("Using", db_label)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False

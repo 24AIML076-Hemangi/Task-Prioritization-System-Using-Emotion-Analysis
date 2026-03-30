@@ -1,4 +1,4 @@
-import { BASE_URL } from "./config.js";
+import { API_BASE_URL } from "./config.js";
 
 document.getElementById('signupForm').addEventListener('submit', function(e) {
     e.preventDefault();
@@ -137,7 +137,7 @@ function submitSignup(fullname, email, username, phone, notificationPreference, 
     signupBtn.textContent = 'Creating Account...';
     
     // Call signup API
-   fetch(`${BASE_URL}/api/auth/signup`, {
+   fetch(`${API_BASE_URL}/api/auth/signup`, {
     method: 'POST',
     headers: {
         'Content-Type': 'application/json',

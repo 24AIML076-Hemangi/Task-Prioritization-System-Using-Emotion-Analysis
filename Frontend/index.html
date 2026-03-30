@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Task Prioritization System Using Emotion Analysis</title>
+    <title>Task Prioritization System</title>
     <style>
       :root {
         color-scheme: light;
@@ -15,120 +15,65 @@
         color: #1c2434;
       }
       .page {
-        max-width: 860px;
+        max-width: 900px;
         margin: 0 auto;
-        padding: 56px 24px 64px;
-      }
-      header {
-        margin-bottom: 32px;
+        padding: 64px 24px 72px;
       }
       h1 {
         margin: 0 0 12px;
-        font-size: 32px;
-        letter-spacing: 0.2px;
+        font-size: 36px;
+        letter-spacing: 0.3px;
       }
       p {
         margin: 0 0 12px;
         line-height: 1.6;
+        font-size: 16px;
       }
       .actions {
-        margin: 28px 0 24px;
+        margin-top: 28px;
         display: flex;
         gap: 12px;
         flex-wrap: wrap;
+        align-items: center;
       }
-      .actions a {
+      .btn {
+        display: inline-block;
         text-decoration: none;
         background: #1d4ed8;
         color: #fff;
-        padding: 10px 18px;
-        border-radius: 8px;
+        padding: 12px 20px;
+        border-radius: 10px;
         font-weight: 600;
       }
-      .actions a.secondary {
-        background: #e2e8f0;
-        color: #1c2434;
-      }
-      .meta {
-        margin-top: 32px;
-        border-top: 1px solid #e2e8f0;
-        padding-top: 16px;
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-      }
-      .meta a {
+      .privacy-link {
         color: #1d4ed8;
+        font-weight: 600;
         text-decoration: none;
-        font-weight: 700;
       }
-      .section {
-        margin-top: 24px;
-      }
-      ul {
-        padding-left: 18px;
-        margin: 8px 0 0;
-      }
-      .developer {
-        background: #f1f5f9;
-        border-radius: 10px;
-        padding: 16px;
-        margin-top: 20px;
+      .card {
+        margin-top: 28px;
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 20px 22px;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
       }
     </style>
   </head>
   <body>
     <main class="page">
-      <header>
-        <h1>Task Prioritization System Using Emotion Analysis</h1>
+      <h1>Task Prioritization System</h1>
+      <p>This app uses emotion analysis and AI to prioritize tasks effectively.</p>
+
+      <div class="actions">
+        <a class="btn" href="/login.html">Go to Login</a>
+        <a class="privacy-link" href="/privacy.html">Privacy Policy</a>
+      </div>
+
+      <section class="card">
         <p>
-          AI-powered task management that helps users organize and prioritize work
-          based on emotional context and productivity frameworks such as the
-          Eisenhower Matrix.
+          The homepage is publicly accessible for Google OAuth verification. No login is required
+          to view this page or the privacy policy.
         </p>
-        <p>
-          Sign in to manage tasks, view your personalized dashboard, and enable
-          reminders as needed.
-        </p>
-      </header>
-
-      <section class="section">
-        <h2>About the App</h2>
-        <p>
-          Task Prioritization System Using Emotion Analysis is designed to help
-          students and professionals focus on what matters most. It combines
-          task metadata with optional emotion signals to surface actionable
-          recommendations.
-        </p>
-      </section>
-
-      <section class="section">
-        <h2>Features</h2>
-        <ul>
-          <li>Emotion-aware task suggestions</li>
-          <li>Eisenhower Matrix prioritization</li>
-          <li>Smart email and SMS reminders</li>
-        </ul>
-      </section>
-
-      <section class="actions">
-        <a href="login.html">Login</a>
-        <a class="secondary" href="signup.html">Create Account</a>
-      </section>
-
-      <section class="developer">
-        <h2>Developer Information</h2>
-        <p>Developed by: Mistry Hemangi Kaushik</p>
-        <p>AIML Student Project</p>
-        <p>Charusat University, CSPIT Institute, Department of AIML</p>
-        <p>Contact: hemangi07628@gmail.com</p>
-      </section>
-
-      <section class="meta">
-        <a href="privacy.html">Privacy Policy</a>
-        <a href="terms.html">Terms of Service</a>
-        <a href="about.html">About</a>
-        <a href="contact.html">Contact</a>
       </section>
     </main>
   </body>

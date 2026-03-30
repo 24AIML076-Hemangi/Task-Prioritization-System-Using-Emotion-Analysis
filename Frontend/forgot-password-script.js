@@ -1,6 +1,6 @@
-import { BASE_URL } from "./config.js";
+import { API_BASE_URL } from "./config.js";
 
-const API_BASE_URL = `${BASE_URL}/api`;
+const API_URL = `${API_BASE_URL}/api`;
 
 // State management
 const state = {
@@ -57,7 +57,7 @@ async function handleEmailSubmit(e) {
         showLoading(true);
         
         // Call backend to send reset email
-        const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        const response = await fetch(`${API_URL}/auth/forgot-password`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -108,7 +108,7 @@ async function handleCodeSubmit(e) {
         showLoading(true);
 
         // Verify the code with backend
-        const response = await fetch(`${API_BASE_URL}/auth/verify-reset-code`, {
+        const response = await fetch(`${API_URL}/auth/verify-reset-code`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -170,7 +170,7 @@ async function handlePasswordSubmit(e) {
         showLoading(true);
 
         // Send password reset request to backend
-        const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+        const response = await fetch(`${API_URL}/auth/reset-password`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -210,7 +210,7 @@ async function handleResendCode() {
         resendBtn.disabled = true;
         resendBtn.textContent = 'Sending...';
 
-        const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        const response = await fetch(`${API_URL}/auth/forgot-password`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

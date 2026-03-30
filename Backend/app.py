@@ -1,4 +1,4 @@
-from flask import Flask, redirect, jsonify, request
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import os
 import sys
@@ -116,7 +116,7 @@ def generic_error_handler(e):
 
 @app.route('/')
 def home():
-    return redirect('/login.html')
+    return app.send_static_file("index.html")
 
 
 @app.route("/debug/users", methods=["GET"])

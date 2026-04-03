@@ -186,6 +186,7 @@ def dispatch_all_due_reminders():
         processed = 0
         sent = 0
         failed = 0
+        current_user_id = None
         for user in users:
             tasks = Task.query.filter_by(user_id=user.email).all()
             due = [
@@ -198,12 +199,21 @@ def dispatch_all_due_reminders():
             if due:
                 for task in due:
                     processed += 1
+                    task_user = User.query.filter_by(email=task.user_id).first() if task.user_id else None
+                    if not task_user or not task_user.email:
+                        print(f"[REMINDER] task_id={task.id} user_id={task.user_id} email=None method=skip")
+                        failed += 1
+                        task.reminder_attempts = (task.reminder_attempts or 0) + 1
+                        continue
+                    if current_user_id is not None and current_user_id != task.user_id:
+                        print("[WARNING] User mismatch in reminder dispatch")
                     print(
                         f"[reminders] Check task={task.id} "
                         f"reminder_at={task.reminder_at} "
                         f"sent={task.reminder_sent} "
                         f"attempts={task.reminder_attempts}"
                     )
+                    print(f"[REMINDER] task_id={task.id} user_id={task.user_id} email={task_user.email} method={task.reminder_method or user.notification_preference or 'email'} current_jwt={current_user_id}")
                     if sent_for_user >= max_per_user_per_run:
                         break
                     if task.reminder_last_sent_at and now - task.reminder_last_sent_at < timedelta(minutes=cooldown_minutes):
@@ -212,23 +222,23 @@ def dispatch_all_due_reminders():
                         print(f"[reminders] Skip task={task.id} max attempts reached")
                         continue
 
-                    method = (task.reminder_method or user.notification_preference or "email").lower()
+                    method = (task.reminder_method or task_user.notification_preference or "email").lower()
 
                     ok_email = False
                     ok_sms = False
-                    phone = task.reminder_phone or user.phone
-                    email_attemptable = bool(user.email) if method in ["email", "both"] else False
+                    phone = task.reminder_phone or task_user.phone
+                    email_attemptable = bool(task_user.email) if method in ["email", "both"] else False
                     sms_attemptable = bool(phone and PHONE_REGEX.match(phone)) if method in ["sms", "both"] else False
 
                     if method in ["email", "both"] and email_attemptable:
                         subject, body = build_reminder_content(
                             task.title,
-                            user.email,
+                            task_user.email,
                             importance=task.importance,
                             urgency=task.urgency,
                             is_daily=True,
                         )
-                        ok_email = send_email(user.email, subject, body, owner_email=user.email)
+                        ok_email = send_email(task_user.email, subject, body, owner_email=task_user.email)
                         print(f"[reminders] task={task.id} email_ok={ok_email}")
                     if method in ["sms", "both"] and sms_attemptable:
                         ok_sms = send_sms(

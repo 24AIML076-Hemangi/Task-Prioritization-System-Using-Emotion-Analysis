@@ -135,6 +135,20 @@ Reminders:
 - `/api/tasks/reminders/dispatch`
 - `/api/auth/sms/test` (JWT, sends test SMS to profile phone or provided phone)
 
+## 🔐 Admin Endpoints Security
+
+- Some endpoints require the `X-ADMIN-KEY` header.
+- The header value must match `ADMIN_SECRET_KEY` from `.env`.
+- Used for sensitive operations like data cleanup.
+
+Admin Endpoints:
+
+- `POST /api/tasks/fix-user-mapping`
+  Fixes invalid or broken task-user mappings in the database.
+  Security: Requires `X-ADMIN-KEY` header matching `ADMIN_SECRET_KEY`.
+  Response: `{"total_checked": X, "fixed": Y, "skipped": Z, "invalid": W}`
+  This endpoint is restricted to admin use only.
+
 ## 💡 Future Improvements
 
 - ML-based emotion detection

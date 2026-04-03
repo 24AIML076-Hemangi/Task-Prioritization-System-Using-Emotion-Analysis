@@ -333,6 +333,15 @@ def dispatch_reminders():
 
     for task in due:
         processed += 1
+        task_user = User.query.filter_by(email=task.user_id).first() if task.user_id else None
+        if not task_user or not task_user.email:
+            print(f"[REMINDER] task_id={task.id} user_id={task.user_id} email=None method=skip current_jwt={user_id}")
+            task.reminder_attempts = (task.reminder_attempts or 0) + 1
+            failed += 1
+            continue
+        if user_id != task.user_id:
+            print("[WARNING] User mismatch in reminder dispatch")
+        print(f"[REMINDER] task_id={task.id} user_id={task.user_id} email={task_user.email} method={task.reminder_method or task_user.notification_preference or 'email'} current_jwt={user_id}")
         if sent >= max_per_run:
             break
         if task.reminder_last_sent_at and now - task.reminder_last_sent_at < timedelta(minutes=cooldown_minutes):
@@ -341,13 +350,13 @@ def dispatch_reminders():
             print(f"[reminders] Skip task={task.id} max attempts reached")
             continue
 
-        account_preference = (user.notification_preference if user and user.notification_preference else 'email').lower()
+        account_preference = (task_user.notification_preference if task_user and task_user.notification_preference else 'email').lower()
         method = (task.reminder_method or account_preference or 'email').lower()
 
         ok_email = False
         ok_sms = False
-        to_email = user.email if user else (user_id if '@' in user_id else None)
-        phone = task.reminder_phone or (user.phone if user else None)
+        to_email = task_user.email
+        phone = task.reminder_phone or task_user.phone
         email_attemptable = bool(to_email) if method in ['email', 'both'] else False
         sms_attemptable = bool(phone and PHONE_REGEX.match(phone)) if method in ['sms', 'both'] else False
 
@@ -359,7 +368,7 @@ def dispatch_reminders():
                 urgency=task.urgency,
                 is_daily=False,
             )
-            ok_email = send_email(to_email, subject, body, owner_email=user_id)
+            ok_email = send_email(to_email, subject, body, owner_email=task_user.email)
             print(f"[reminders] task={task.id} email_ok={ok_email}")
 
         if method in ['sms', 'both'] and sms_attemptable:
@@ -422,4 +431,74 @@ def reminders_debug():
             "reminder_method": task.reminder_method,
             "notification_preference": user_pref,
         })
-    return jsonify({"pending": payload}), 200
+    return jsonify({"current_user_id": user_id, "tasks": payload}), 200
+
+
+@task_bp.route('/verify-ownership', methods=['GET'])
+@jwt_required()
+def verify_task_ownership():
+    """Return task ownership mapping for the authenticated user."""
+    user_id = get_current_user_id()
+    tasks = Task.query.filter_by(user_id=user_id).all()
+    payload = []
+    for task in tasks:
+        task_user = User.query.filter_by(email=task.user_id).first() if task.user_id else None
+        payload.append({
+            "task_id": task.id,
+            "task_user_id": task.user_id,
+            "user_email": task_user.email if task_user else None,
+        })
+    return jsonify({"current_user_id": user_id, "tasks": payload}), 200
+
+
+@task_bp.route('/fix-user-mapping', methods=['POST'])
+@jwt_required()
+def fix_user_mapping():
+    """Fix tasks whose user_id no longer maps to a valid user email."""
+    admin_key = request.headers.get("X-ADMIN-KEY")
+    expected_key = os.getenv("ADMIN_SECRET_KEY")
+    if not admin_key or not expected_key or admin_key != expected_key:
+        print("[SECURITY] Unauthorized cleanup attempt")
+        return jsonify({"error": "Unauthorized"}), 403
+
+    total_checked = 0
+    fixed = 0
+    skipped = 0
+    invalid = 0
+
+    tasks = Task.query.all()
+    for task in tasks:
+        total_checked += 1
+        old_user_id = task.user_id
+        if not old_user_id:
+            invalid += 1
+            print(f"[CLEANUP] task_id={task.id} old_user_id=None status=invalid")
+            continue
+
+        # Exact match first
+        user = User.query.filter_by(email=old_user_id).first()
+        if user:
+            skipped += 1
+            print(f"[CLEANUP] task_id={task.id} old_user_id={old_user_id} status=skipped")
+            continue
+
+        # Case-insensitive match (fix if only casing is wrong)
+        user = User.query.filter(db.func.lower(User.email) == old_user_id.lower()).first()
+        if user:
+            task.user_id = user.email
+            fixed += 1
+            print(f"[CLEANUP] task_id={task.id} old_user_id={old_user_id} status=fixed")
+            continue
+
+        invalid += 1
+        print(f"[CLEANUP] task_id={task.id} old_user_id={old_user_id} status=invalid")
+
+    if fixed:
+        db.session.commit()
+
+    return jsonify({
+        "total_checked": total_checked,
+        "fixed": fixed,
+        "skipped": skipped,
+        "invalid": invalid,
+    }), 200

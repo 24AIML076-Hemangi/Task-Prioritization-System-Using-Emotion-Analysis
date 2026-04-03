@@ -73,6 +73,13 @@ try:
 except Exception as exc:
     print(f"[deepface] preload failed: {exc}")
 
+# Email configuration validation (startup)
+email_user = os.getenv("SMTP_USER") or os.getenv("SENDER_EMAIL") or os.getenv("POSTMARK_FROM")
+email_pass = os.getenv("SMTP_PASS") or os.getenv("SENDER_PASSWORD")
+postmark_key = os.getenv("POSTMARK_API_KEY")
+if not (postmark_key or (email_user and email_pass)):
+    print("[warn] Email config invalid: reminders may not send")
+
 # Optional server-side sessions (e.g., Render + Redis)
 try:
     from flask_session import Session  # type: ignore
@@ -170,20 +177,39 @@ def dispatch_all_due_reminders():
     )
 
     with app.app_context():
+        print("[reminders] Dispatch started")
         now = datetime.utcnow()
         cooldown_minutes = int(os.getenv("REMINDER_COOLDOWN_MINUTES", "30"))
         max_per_user_per_run = int(os.getenv("REMINDER_MAX_PER_USER_PER_RUN", "5"))
+        max_attempts = int(os.getenv("REMINDER_MAX_ATTEMPTS", "3"))
         users = User.query.all()
+        processed = 0
+        sent = 0
+        failed = 0
         for user in users:
             tasks = Task.query.filter_by(user_id=user.email).all()
-            due = [t for t in tasks if t.reminder_at and not t.reminder_sent and t.reminder_at <= now and not t.completed]
+            due = [
+                t
+                for t in tasks
+                if t.reminder_at and not t.reminder_sent and t.reminder_at <= now and not t.completed
+            ]
 
             sent_for_user = 0
             if due:
                 for task in due:
+                    processed += 1
+                    print(
+                        f"[reminders] Check task={task.id} "
+                        f"reminder_at={task.reminder_at} "
+                        f"sent={task.reminder_sent} "
+                        f"attempts={task.reminder_attempts}"
+                    )
                     if sent_for_user >= max_per_user_per_run:
                         break
                     if task.reminder_last_sent_at and now - task.reminder_last_sent_at < timedelta(minutes=cooldown_minutes):
+                        continue
+                    if task.reminder_attempts >= max_attempts:
+                        print(f"[reminders] Skip task={task.id} max attempts reached")
                         continue
 
                     method = (task.reminder_method or user.notification_preference or "email").lower()
@@ -203,6 +229,7 @@ def dispatch_all_due_reminders():
                             is_daily=True,
                         )
                         ok_email = send_email(user.email, subject, body, owner_email=user.email)
+                        print(f"[reminders] task={task.id} email_ok={ok_email}")
                     if method in ["sms", "both"] and sms_attemptable:
                         ok_sms = send_sms(
                             phone,
@@ -213,6 +240,7 @@ def dispatch_all_due_reminders():
                                 is_daily=True,
                             ),
                         )
+                        print(f"[reminders] task={task.id} sms_ok={ok_sms}")
 
                     delivery_satisfied = (
                         (method == "email" and ok_email)
@@ -224,10 +252,18 @@ def dispatch_all_due_reminders():
                         or (method == "sms" and not sms_attemptable)
                         or (method == "both" and not email_attemptable and not sms_attemptable)
                     )
-                    if delivery_satisfied or terminal_misconfig:
+                    if delivery_satisfied:
                         task.reminder_sent = True
                         task.reminder_last_sent_at = now
                         sent_for_user += 1
+                        sent += 1
+                    else:
+                        task.reminder_attempts = (task.reminder_attempts or 0) + 1
+                        failed += 1
+                        if terminal_misconfig:
+                            print(f"[reminders] task={task.id} failed: misconfig")
+                        else:
+                            print(f"[reminders] task={task.id} failed: provider error")
 
             # Daily "no tasks" gentle reminder if user has no active tasks.
             active_tasks = [t for t in tasks if not t.completed]
@@ -258,6 +294,10 @@ def dispatch_all_due_reminders():
                         user.last_empty_nudge_at = now
 
         db.session.commit()
+        print(
+            f"[reminders] Dispatch done processed={processed} sent={sent} failed={failed}"
+        )
+        return {"processed": processed, "sent": sent, "failed": failed}
 
 # Create database tables on startup
 with app.app_context():
@@ -317,6 +357,8 @@ with app.app_context():
             alters.append(f"ALTER TABLE tasks ADD COLUMN reminder_last_sent_at {datetime_type}")
         if 'reminder_phone' not in columns:
             alters.append("ALTER TABLE tasks ADD COLUMN reminder_phone VARCHAR(30)")
+        if 'reminder_attempts' not in columns:
+            alters.append("ALTER TABLE tasks ADD COLUMN reminder_attempts INTEGER DEFAULT 0")
         for stmt in alters:
             db.session.execute(text(stmt))
         if alters:
@@ -349,7 +391,15 @@ scheduler.add_job(
     id="daily-reminder-sweep",
     replace_existing=True,
 )
+scheduler.add_job(
+    dispatch_all_due_reminders,
+    trigger="interval",
+    minutes=1,
+    id="reminder-interval-sweep",
+    replace_existing=True,
+)
 scheduler.start()
+print("[reminders] Scheduler started")
 
 if __name__ == "__main__":
     

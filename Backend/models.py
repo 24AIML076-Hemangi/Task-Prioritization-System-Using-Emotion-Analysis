@@ -81,6 +81,7 @@ class Task(db.Model):
     reminder_sent = db.Column(db.Boolean, default=False)
     reminder_last_sent_at = db.Column(db.DateTime, default=None)
     reminder_phone = db.Column(db.String(30), default=None)
+    reminder_attempts = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

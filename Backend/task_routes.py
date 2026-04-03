@@ -133,6 +133,8 @@ def create_task():
     )
     if not new_task.reminder_at and due_time:
         new_task.reminder_at = merge_date_time(due_at, due_time)
+    if new_task.reminder_method and not new_task.reminder_at:
+        return jsonify({'error': 'reminder_at is required when reminder_method is set'}), 400
     if new_task.reminder_at:
         new_task.reminder_sent = False
 
@@ -181,6 +183,8 @@ def update_task(task_id):
         task.reminder_last_sent_at = None
     if 'reminder_method' in data:
         task.reminder_method = data.get('reminder_method')
+        if task.reminder_method and not task.reminder_at:
+            return jsonify({'error': 'reminder_at is required when reminder_method is set'}), 400
     if 'reminder_phone' in data:
         raw_reminder_phone = str(data.get('reminder_phone') or '').strip()
         reminder_phone_country = str(data.get('reminder_phone_country', DEFAULT_PHONE_COUNTRY)).strip() or DEFAULT_PHONE_COUNTRY
@@ -312,21 +316,29 @@ def emotion_scan():
 @jwt_required()
 def dispatch_reminders():
     """Send due reminders for the authenticated user (email/SMS)"""
+    print("[reminders] Manual dispatch triggered")
     user_id = get_current_user_id()
     now = datetime.utcnow()
     cooldown_minutes = int(os.getenv("REMINDER_COOLDOWN_MINUTES", "30"))
     max_per_run = int(os.getenv("REMINDER_MAX_PER_USER_PER_RUN", "5"))
+    max_attempts = int(os.getenv("REMINDER_MAX_ATTEMPTS", "3"))
 
     tasks = Task.query.filter_by(user_id=user_id).all()
     due = [t for t in tasks if t.reminder_at and not t.reminder_sent and t.reminder_at <= now and not t.completed]
 
     user = User.query.filter_by(email=user_id).first()
     sent = 0
+    failed = 0
+    processed = 0
 
     for task in due:
+        processed += 1
         if sent >= max_per_run:
             break
         if task.reminder_last_sent_at and now - task.reminder_last_sent_at < timedelta(minutes=cooldown_minutes):
+            continue
+        if task.reminder_attempts is not None and task.reminder_attempts >= max_attempts:
+            print(f"[reminders] Skip task={task.id} max attempts reached")
             continue
 
         account_preference = (user.notification_preference if user and user.notification_preference else 'email').lower()
@@ -348,6 +360,7 @@ def dispatch_reminders():
                 is_daily=False,
             )
             ok_email = send_email(to_email, subject, body, owner_email=user_id)
+            print(f"[reminders] task={task.id} email_ok={ok_email}")
 
         if method in ['sms', 'both'] and sms_attemptable:
             ok_sms = send_sms(
@@ -359,6 +372,7 @@ def dispatch_reminders():
                     is_daily=False,
                 ),
             )
+            print(f"[reminders] task={task.id} sms_ok={ok_sms}")
 
         delivery_satisfied = (
             (method == 'email' and ok_email)
@@ -370,12 +384,42 @@ def dispatch_reminders():
             or (method == 'sms' and not sms_attemptable)
             or (method == 'both' and not email_attemptable and not sms_attemptable)
         )
-        if delivery_satisfied or terminal_misconfig:
+        if delivery_satisfied:
             task.reminder_sent = True
             task.reminder_last_sent_at = now
             sent += 1
+        else:
+            task.reminder_attempts = (task.reminder_attempts or 0) + 1
+            failed += 1
+            if terminal_misconfig:
+                print(f"[reminders] task={task.id} failed: misconfig")
+            else:
+                print(f"[reminders] task={task.id} failed: provider error")
 
-    if sent:
+    if sent or failed:
         db.session.commit()
 
-    return jsonify({'sent': sent, 'due': len(due)}), 200
+    return jsonify({'status': 'success', 'processed': processed, 'sent': sent, 'failed': failed}), 200
+
+
+@task_bp.route('/reminders/debug', methods=['POST'])
+@jwt_required()
+def reminders_debug():
+    """Debug pending reminders for the authenticated user."""
+    user_id = get_current_user_id()
+    now = datetime.utcnow()
+    user = User.query.filter_by(email=user_id).first()
+    user_pref = user.notification_preference if user else None
+    tasks = Task.query.filter_by(user_id=user_id, reminder_sent=False).all()
+    payload = []
+    for task in tasks:
+        reminder_at = task.reminder_at
+        payload.append({
+            "id": task.id,
+            "reminder_at": reminder_at.isoformat() if reminder_at else None,
+            "now_utc": now.isoformat(),
+            "is_due": bool(reminder_at and reminder_at <= now),
+            "reminder_method": task.reminder_method,
+            "notification_preference": user_pref,
+        })
+    return jsonify({"pending": payload}), 200

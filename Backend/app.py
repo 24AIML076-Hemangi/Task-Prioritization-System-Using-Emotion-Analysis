@@ -27,30 +27,17 @@ load_dotenv(os.path.join(project_root, ".env"))
 # Initialize Flask app
 app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
 
-# Database Configuration (PostgreSQL in production, SQLite locally)
+# Database Configuration (PostgreSQL is used in production to ensure persistent storage across deployments)
 
-def _normalize_postgres_url(url):
-    if not url:
-        return None
-    # Fix for Render postgres:// issue
-    return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
-
-env_db_url = _normalize_postgres_url(os.getenv("DATABASE_URL"))
-if env_db_url:
-    db_url = env_db_url
-    db_label = "PostgreSQL"
+db_url = os.environ.get("DATABASE_URL")
+if db_url:
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+    print("Using DB:", db_url)
 else:
-    if os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"):
-        raise RuntimeError("DATABASE_URL must be set on Render to avoid data loss.")
-    # Local fallback when DATABASE_URL is not set: SQLite file.
-    sqlite_path = os.path.join(project_root, "Backend", "tasks.db")
-    sqlite_path = sqlite_path.replace("\\", "/")
-    db_url = f"sqlite:///{sqlite_path}"
-    db_label = "SQLite"
-
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-print("Using DB:", db_url)
-print("Using", db_label)
+    app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///local.db"
+    print("Using DB: sqlite:///local.db")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False
@@ -281,8 +268,6 @@ with app.app_context():
         user_columns = {c['name'] for c in inspector.get_columns('users')}
         user_alters = []
         datetime_type = "TIMESTAMP" if db.engine.dialect.name == "postgresql" else "DATETIME"
-        if 'username' not in user_columns:
-            user_alters.append("ALTER TABLE users ADD COLUMN username VARCHAR(80)")
         if 'full_name' not in user_columns:
             user_alters.append("ALTER TABLE users ADD COLUMN full_name VARCHAR(200)")
         if 'phone' not in user_columns:
@@ -309,8 +294,6 @@ with app.app_context():
             db.session.execute(text(stmt))
         if user_alters:
             db.session.commit()
-        db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_username_uq ON users (username)"))
-        db.session.commit()
 
     if 'tasks' in inspector.get_table_names():
         columns = {c['name'] for c in inspector.get_columns('tasks')}

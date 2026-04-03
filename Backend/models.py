@@ -12,7 +12,6 @@ class User(db.Model):
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=True, index=True)
     full_name = db.Column(db.String(200), nullable=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
@@ -49,7 +48,6 @@ class User(db.Model):
         """Convert user to dictionary for JSON response (exclude password)"""
         return {
             'id': self.id,
-            'username': self.username,
             'fullname': self.full_name,
             'email': self.email,
             'phone': self.phone,
@@ -70,7 +68,7 @@ class Task(db.Model):
     __tablename__ = 'tasks'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.String(100), nullable=False)  # Username from login
+    user_id = db.Column(db.String(100), nullable=False)  # User email from login
     title = db.Column(db.String(500), nullable=False)
     importance = db.Column(db.String(20), default='not-important')  # 'important' or 'not-important'
     urgency = db.Column(db.String(20), default='not-urgent')  # 'urgent' or 'not-urgent'

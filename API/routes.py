@@ -117,7 +117,6 @@ def signup():
     data = request.get_json() or {}
     email = data.get("email", "").strip().lower()
     fullname = data.get("fullname", "").strip()
-    username = data.get("username", "").strip()
     password = data.get("password", "")
     raw_phone = str(data.get("phone", "")).strip()
     phone_country = str(data.get("phone_country", DEFAULT_PHONE_COUNTRY)).strip() or DEFAULT_PHONE_COUNTRY
@@ -126,14 +125,13 @@ def signup():
 
     print("[signup] hit", {
         "email": email,
-        "username": username,
         "fullname": fullname,
         "phone": phone,
         "notification_preference": notification_preference,
     })
 
-    if not email or not password or not username:
-        return jsonify({"error": "Email, username, and password required"}), 400
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
 
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return jsonify({"error": "Invalid email format"}), 400
@@ -151,13 +149,8 @@ def signup():
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
         return jsonify({"error": "Email already registered"}), 400
-    existing_username = User.query.filter_by(username=username).first()
-    if existing_username:
-        return jsonify({"error": "Username already taken"}), 400
-
     new_user = User(
         email=email,
-        username=username,
         full_name=fullname or None,
         phone=phone,
         notification_preference=notification_preference,
@@ -181,18 +174,14 @@ def signup():
 def login():
     """Authenticate user and return JWT tokens"""
     data = request.get_json() or {}
-    identifier = (data.get("email") or data.get("username") or data.get("identifier") or "").strip()
+    identifier = (data.get("email") or data.get("identifier") or "").strip()
     password = data.get("password", "")
 
     if not identifier or not password:
-        return jsonify({"error": "Email/username and password required"}), 400
+        return jsonify({"error": "Email and password required"}), 400
 
-    if "@" in identifier:
-        login_method = "email"
-        user = User.query.filter_by(email=identifier.lower()).first()
-    else:
-        login_method = "username"
-        user = User.query.filter_by(username=identifier).first()
+    login_method = "email"
+    user = User.query.filter_by(email=identifier.lower()).first()
     if not user:
         return jsonify({"error": "User not found"}), 404
     if not user.check_password(password):

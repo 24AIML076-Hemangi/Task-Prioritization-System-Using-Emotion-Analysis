@@ -41,14 +41,18 @@ else:
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-change-me')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
 app.secret_key = app.config['SECRET_KEY']
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', app.config['SECRET_KEY'])
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = int(os.getenv('JWT_ACCESS_EXPIRES_SECONDS', '3600'))
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = int(os.getenv('JWT_REFRESH_EXPIRES_SECONDS', str(30 * 24 * 3600)))
 app.config['PROPAGATE_EXCEPTIONS'] = False
-app.config['SESSION_COOKIE_SAMESITE'] = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
-app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', '').lower() in {'1', 'true', 'yes'}
+is_production = os.environ.get("RENDER") or os.environ.get("ENV") == "production"
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="None" if is_production else "Lax",
+    SESSION_COOKIE_SECURE=True if is_production else False,
+)
 session_lifetime_seconds = int(os.getenv('SESSION_LIFETIME_SECONDS', str(7 * 24 * 3600)))
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=session_lifetime_seconds)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True

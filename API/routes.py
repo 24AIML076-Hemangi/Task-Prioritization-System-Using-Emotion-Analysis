@@ -327,9 +327,11 @@ def google_mail_start():
 
     state = secrets.token_urlsafe(32)
     session.permanent = True
+    session["oauth_state"] = state
     session["google_oauth_state"] = state
     session["google_oauth_email"] = user.email
     session["google_oauth_state_created_at"] = datetime.utcnow().isoformat()
+    print("Session before redirect:", dict(session))
     return jsonify({"auth_url": build_auth_url(state)}), 200
 
 
@@ -348,11 +350,12 @@ def google_mail_callback():
     if not state:
         return "Missing OAuth state", 400
 
-    session_state = session.get("google_oauth_state")
+    print("Session after callback:", dict(session))
+    session_state = session.get("oauth_state") or session.get("google_oauth_state")
     session_email = session.get("google_oauth_email")
     state_created_at = session.get("google_oauth_state_created_at")
     if not session_state or not session_email:
-        return "OAuth session not found. Please restart the login flow.", 400
+        return jsonify({"error": "OAuth session expired. Restart login."}), 400
     if session_state != state:
         return "OAuth state mismatch. Please restart the login flow.", 400
     if _oauth_state_expired(state_created_at):
@@ -411,6 +414,7 @@ def google_mail_callback():
     session.pop("google_oauth_state", None)
     session.pop("google_oauth_email", None)
     session.pop("google_oauth_state_created_at", None)
+    session.pop("oauth_state", None)
 
     return redirect("http://localhost:3000/dashboard")
 

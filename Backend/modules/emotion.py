@@ -6,6 +6,7 @@ focused | stressed | neutral
 
 import base64
 import logging
+import os
 from io import BytesIO
 
 import numpy as np
@@ -17,6 +18,26 @@ EMOTION_NEUTRAL = "neutral"
 ALLOWED_EMOTIONS = {EMOTION_STRESSED, EMOTION_FOCUSED, EMOTION_NEUTRAL}
 
 logger = logging.getLogger(__name__)
+_DEEPFACE_READY = False
+_DEEPFACE_ERROR = None
+
+
+def preload_deepface_model():
+    """Warm up DeepFace emotion model and ensure weights directory exists."""
+    global _DEEPFACE_READY, _DEEPFACE_ERROR
+    if _DEEPFACE_READY:
+        return True
+    try:
+        from deepface import DeepFace
+        weights_dir = os.path.expanduser("~/.deepface/weights")
+        os.makedirs(weights_dir, exist_ok=True)
+        DeepFace.build_model("Emotion")
+        _DEEPFACE_READY = True
+        return True
+    except Exception as exc:
+        _DEEPFACE_ERROR = str(exc)
+        logger.exception("DeepFace preload error: %s", _DEEPFACE_ERROR)
+        return False
 
 
 def normalize_emotion_label(value):
@@ -83,6 +104,18 @@ def detect_emotion_from_image(base64_image):
                     "source": "missing_deepface",
                     "dominant_emotion": EMOTION_NEUTRAL,
                     "scores": {},
+                },
+            }
+        if not preload_deepface_model():
+            return {
+                "emotion": EMOTION_NEUTRAL,
+                "confidence": 0.6,
+                "message": "DeepFace model not ready; using neutral detection",
+                "debug": {
+                    "source": "model_not_ready",
+                    "dominant_emotion": EMOTION_NEUTRAL,
+                    "scores": {},
+                    "error": _DEEPFACE_ERROR,
                 },
             }
 

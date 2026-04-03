@@ -3,7 +3,7 @@ Password Reset Routes
 Handles forgot password, reset code verification, and password reset
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, redirect, session
 from flask_cors import cross_origin
 from flask_jwt_extended import (
     create_access_token,
@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta
 import sys
 import os
+import requests
 
 # Import database and User model
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,8 +26,9 @@ from Backend.activity_logger import log_activity
 from google_oauth import (
     build_auth_url,
     config_ready,
-    exchange_code_for_tokens,
     fetch_google_email,
+    oauth_config,
+    GOOGLE_TOKEN_URL,
 )
 from notifications import send_sms, send_email, build_welcome_content
 
@@ -35,7 +37,6 @@ auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 # TEMP storage (college demo only)
 reset_tokens = {}
-oauth_states = {}
 PHONE_REGEX = re.compile(r"^\+[1-9]\d{7,14}$")
 PHONE_COUNTRY_REGEX = re.compile(r"^\+[1-9]\d{0,3}$")
 DEFAULT_PHONE_COUNTRY = "+91"
@@ -97,11 +98,14 @@ def mock_send_email(email, code):
     return True
 
 
-def _clear_expired_oauth_states():
-    now = datetime.utcnow()
-    expired = [k for k, v in oauth_states.items() if v.get("expires_at") and v["expires_at"] < now]
-    for key in expired:
-        del oauth_states[key]
+def _oauth_state_expired(state_created_at):
+    if not state_created_at:
+        return True
+    try:
+        created = datetime.fromisoformat(state_created_at)
+    except Exception:
+        return True
+    return datetime.utcnow() - created > timedelta(minutes=10)
 
 
 # -------------------- ROUTES --------------------
@@ -332,59 +336,94 @@ def google_mail_start():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    _clear_expired_oauth_states()
     state = secrets.token_urlsafe(32)
-    oauth_states[state] = {
-        "email": user.email,
-        "expires_at": datetime.utcnow() + timedelta(minutes=10),
-    }
+    session.permanent = True
+    session["google_oauth_state"] = state
+    session["google_oauth_email"] = user.email
+    session["google_oauth_state_created_at"] = datetime.utcnow().isoformat()
     return jsonify({"auth_url": build_auth_url(state)}), 200
 
 
 @auth_bp.route("/google-mail/callback", methods=["GET"])
 @cross_origin()
 def google_mail_callback():
+    print("ARGS:", request.args)
     state = request.args.get("state", "").strip()
     code = request.args.get("code", "").strip()
     error = request.args.get("error", "").strip()
 
     if error:
         return f"Google OAuth failed: {error}", 400
-    if not state or not code:
-        return "Missing state or code", 400
+    if not code:
+        return "Missing authorization code", 400
+    if not state:
+        return "Missing OAuth state", 400
 
-    _clear_expired_oauth_states()
-    pending = oauth_states.pop(state, None)
-    if not pending:
-        return "Invalid or expired OAuth state", 400
+    session_state = session.get("google_oauth_state")
+    session_email = session.get("google_oauth_email")
+    state_created_at = session.get("google_oauth_state_created_at")
+    if not session_state or not session_email:
+        return "OAuth session not found. Please restart the login flow.", 400
+    if session_state != state:
+        return "OAuth state mismatch. Please restart the login flow.", 400
+    if _oauth_state_expired(state_created_at):
+        return "OAuth session expired. Please restart the login flow.", 400
 
-    user = User.query.filter_by(email=pending["email"]).first()
+    user = User.query.filter_by(email=session_email).first()
     if not user:
         return "User not found", 404
 
-    token_data = exchange_code_for_tokens(code)
-    if not token_data:
-        return "Token exchange failed", 400
+    cfg = oauth_config()
+    if not (cfg.get("client_id") and cfg.get("client_secret") and cfg.get("redirect_uri")):
+        return "Google OAuth is not configured on server", 400
+
+    token_response = requests.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "client_id": cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": cfg["redirect_uri"],
+        },
+        timeout=15,
+    )
+    try:
+        token_json = token_response.json()
+    except ValueError:
+        token_json = {"error": "non-json-response", "text": token_response.text}
+    print(token_json)
+    if not token_response.ok:
+        return jsonify({"error": "Token exchange failed", "details": token_json}), 400
+
+    token_data = token_json
+    try:
+        token_data["expires_at"] = datetime.utcnow() + timedelta(
+            seconds=int(token_data.get("expires_in", 3600))
+        )
+    except (TypeError, ValueError):
+        token_data["expires_at"] = datetime.utcnow() + timedelta(seconds=3600)
 
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
-    if not access_token or not refresh_token:
-        return "Google did not return required tokens. Try reconnect with consent again.", 400
+    if not access_token:
+        return "Google did not return an access token.", 400
 
     gmail_email = fetch_google_email(access_token) or user.email
     user.gmail_connected = True
     user.gmail_email = gmail_email
     user.gmail_access_token = access_token
-    user.gmail_refresh_token = refresh_token
+    if refresh_token:
+        user.gmail_refresh_token = refresh_token
     user.gmail_token_expiry = token_data.get("expires_at")
     user.gmail_scope = token_data.get("scope")
     db.session.commit()
 
-    return (
-        "<html><body><h3>Gmail connected successfully.</h3>"
-        "<script>window.close && window.close();</script></body></html>",
-        200,
-    )
+    session.pop("google_oauth_state", None)
+    session.pop("google_oauth_email", None)
+    session.pop("google_oauth_state_created_at", None)
+
+    return redirect("http://localhost:3000/dashboard")
 
 
 @auth_bp.route("/google-mail/disconnect", methods=["POST"])

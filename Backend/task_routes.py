@@ -290,6 +290,7 @@ def emotion_scan():
             },
         }
     emotion_result["emotion"] = normalize_emotion_label(emotion_result.get("emotion"))
+    print("Emotion result:", emotion_result)
 
     emotion_log = EmotionLog(
         user_id=user_id,

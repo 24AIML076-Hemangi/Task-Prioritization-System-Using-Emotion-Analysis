@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import database
 from database import db
 from models import User, Task, EmotionLog, UserActivityLog
+from modules.emotion import preload_deepface_model
 
 # Resolve frontend directory and serve it from Flask so one server can host API + UI
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +40,8 @@ if env_db_url:
     db_url = env_db_url
     db_label = "PostgreSQL"
 else:
+    if os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"):
+        raise RuntimeError("DATABASE_URL must be set on Render to avoid data loss.")
     # Local fallback when DATABASE_URL is not set: SQLite file.
     sqlite_path = os.path.join(project_root, "Backend", "tasks.db")
     sqlite_path = sqlite_path.replace("\\", "/")
@@ -52,10 +55,16 @@ print("Using", db_label)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_SORT_KEYS'] = False
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-change-me')
+app.secret_key = app.config['SECRET_KEY']
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', app.config['SECRET_KEY'])
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = int(os.getenv('JWT_ACCESS_EXPIRES_SECONDS', '3600'))
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = int(os.getenv('JWT_REFRESH_EXPIRES_SECONDS', str(30 * 24 * 3600)))
 app.config['PROPAGATE_EXCEPTIONS'] = False
+app.config['SESSION_COOKIE_SAMESITE'] = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', '').lower() in {'1', 'true', 'yes'}
+session_lifetime_seconds = int(os.getenv('SESSION_LIFETIME_SECONDS', str(7 * 24 * 3600)))
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=session_lifetime_seconds)
+app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 
 # Initialize Database with app
 db.init_app(app)
@@ -66,6 +75,34 @@ limiter = Limiter(
     storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
 )
 limiter.init_app(app)
+
+# Preload DeepFace emotion model to avoid first-request latency or missing weights.
+try:
+    preload_deepface_model()
+except Exception as exc:
+    print(f"[deepface] preload failed: {exc}")
+
+# Optional server-side sessions (e.g., Render + Redis)
+try:
+    from flask_session import Session  # type: ignore
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        app.config["SESSION_TYPE"] = "redis"
+        try:
+            from redis import Redis  # type: ignore
+            app.config["SESSION_REDIS"] = Redis.from_url(redis_url)
+        except Exception as redis_exc:
+            print(f"[session] Redis unavailable, falling back to filesystem: {redis_exc}")
+            app.config["SESSION_TYPE"] = "filesystem"
+            app.config["SESSION_FILE_DIR"] = os.path.join(project_root, ".flask_sessions")
+    else:
+        app.config["SESSION_TYPE"] = "filesystem"
+        app.config["SESSION_FILE_DIR"] = os.path.join(project_root, ".flask_sessions")
+    if app.config.get("SESSION_TYPE") == "filesystem":
+        os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
+    Session(app)
+except Exception as exc:
+    print(f"[session] Flask-Session not enabled: {exc}")
 
 # Enable CORS for frontend communication
 default_origins = ["http://localhost:5000", "http://localhost:3000"]

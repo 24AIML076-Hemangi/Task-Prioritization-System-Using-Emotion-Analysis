@@ -4,101 +4,37 @@ Falls back to console output if providers are not configured.
 """
 import os
 import smtplib
-import json
-import urllib.request
-import urllib.error
 import random
 import re
 from email.mime.text import MIMEText
-from datetime import datetime, timedelta
-
-from database import db
-from models import User
-from google_oauth import config_ready, refresh_access_token, send_gmail_api
+from datetime import datetime
 
 PHONE_REGEX = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
-def _send_with_user_gmail(owner_email, to_email, subject, body):
-    if not owner_email or not config_ready():
+def send_email(to_email, subject, body, owner_email=None, is_html=False):
+    email_user = os.getenv("EMAIL_USER")
+    email_pass = os.getenv("EMAIL_PASS")
+    if not email_user or not email_pass:
+        print("[MOCK EMAIL] Config missing, skipping real send")
         return False
-
-    user = User.query.filter_by(email=owner_email).first()
-    if not user or not user.gmail_connected or not user.gmail_refresh_token:
-        return False
-
-    # Refresh token if missing/expired, then send via Gmail API.
-    access_token = user.gmail_access_token
-    expiry = user.gmail_token_expiry
-    if not access_token or not expiry or expiry <= datetime.utcnow() + timedelta(seconds=30):
-        refreshed = refresh_access_token(user.gmail_refresh_token)
-        if not refreshed or not refreshed.get("access_token"):
-            return False
-        user.gmail_access_token = refreshed["access_token"]
-        user.gmail_token_expiry = refreshed.get("expires_at")
-        db.session.commit()
-        access_token = user.gmail_access_token
-
-    from_email = user.gmail_email or owner_email
-    return send_gmail_api(access_token, from_email, to_email, subject, body)
-
-
-def send_email(to_email, subject, body, owner_email=None):
-    if _send_with_user_gmail(owner_email, to_email, subject, body):
-        return True
-
-    # Prefer Postmark if configured
-    postmark_key = os.getenv("POSTMARK_API_KEY")
-    postmark_from = os.getenv("POSTMARK_FROM") or os.getenv("SMTP_FROM")
-    if postmark_key and postmark_from:
-        payload = {
-            "From": postmark_from,
-            "To": to_email,
-            "Subject": subject,
-            "TextBody": body,
-        }
-        req = urllib.request.Request(
-            "https://api.postmarkapp.com/email",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "X-Postmark-Server-Token": postmark_key,
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return 200 <= resp.getcode() < 300
-        except urllib.error.HTTPError as exc:
-            print(f"[email] Postmark HTTP error: {exc.code}")
-            return False
-        except Exception as exc:
-            print(f"[email] Postmark error: {exc}")
-            return False
-
-    # Fallback: SMTP (if Postmark not configured)
-    host = os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER") or os.getenv("SENDER_EMAIL")
-    password = os.getenv("SMTP_PASS") or os.getenv("SENDER_PASSWORD")
-    from_email = os.getenv("SMTP_FROM") or os.getenv("SENDER_EMAIL") or user
-
-    if not host or not user or not password or not from_email:
-        return _mock_email(to_email, subject, body)
-
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = from_email
-    msg["To"] = to_email
 
     try:
-        with smtplib.SMTP(host, port, timeout=10) as server:
-            server.starttls()
-            server.login(user, password)
-            server.send_message(msg)
+        msg = MIMEText(body, "html" if is_html else "plain")
+        msg["Subject"] = subject
+        msg["From"] = email_user
+        msg["To"] = to_email
+
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
+        server.starttls()
+        server.login(email_user, email_pass)
+        server.sendmail(email_user, to_email, msg.as_string())
+        server.quit()
+
+        print(f"[EMAIL] Sent to {to_email}")
         return True
     except Exception as exc:
-        print(f"[email] SMTP error: {exc}")
+        print(f"[EMAIL ERROR] {exc}")
         return False
 
 
@@ -110,76 +46,37 @@ def _display_name_from_email(email):
     return cleaned.title() if cleaned else "Friend"
 
 
-def _task_type(importance=None, urgency=None):
-    imp = (importance or "not-important").strip().lower()
-    urg = (urgency or "not-urgent").strip().lower()
-    if imp == "important" and urg == "urgent":
-        return "do-now"
-    if imp == "important" and urg != "urgent":
-        return "plan-deep"
-    if imp != "important" and urg == "urgent":
-        return "delegate-fast"
-    return "later-list"
-
-
-def _typed_roast_line(importance=None, urgency=None):
-    roast_by_type = {
-        "do-now": [
-            "Fire task alert: yeh abhi ka kaam hai, kal ka excuse nahi. 🔥",
-            "Priority siren: important + urgent ko snooze karna risky move hai. 🚨",
-            "Roast mode: deadline ko ignore karke chill? Bold strategy. 😬",
-        ],
-        "plan-deep": [
-            "Deep-work task hai, random scrolling ka side quest mat chalu karo. 🧠",
-            "Important hai but not urgent, isi phase me jeetna smart hota hai. 📌",
-            "Roast mode: future-you ko panic gift mat do. 😅",
-        ],
-        "delegate-fast": [
-            "Urgent hai but low-impact, speed rakho aur overthink mat karo. ⏱️",
-            "Quick-hit task: 10 min me niptao, energy bachao. ⚡",
-            "Roast mode: chhote task pe overdrama bandh. 😄",
-        ],
-        "later-list": [
-            "Low priority task hai, but consistency ka scorecard chalta rehta hai. 📋",
-            "Small task ko stack mat hone do, warna weekend hostage ban jayega. 🧱",
-            "Roast mode: tiny task ko bhi trilogy mat banao. 😜",
-        ],
-    }
-    return random.choice(roast_by_type[_task_type(importance, urgency)])
-
-
-def build_reminder_content(task_title, user_email=None, importance=None, urgency=None, is_daily=False):
-    """Return friendly bilingual reminder subject/body text with typed roast + emojis."""
-    name = _display_name_from_email(user_email)
+def build_reminder_content(
+    task_title,
+    user_email=None,
+    importance=None,
+    urgency=None,
+    is_daily=False,
+    reminder_at=None,
+):
     task = (task_title or "Your task").strip()
-    daily_tag = "Daily Reminder" if is_daily else "Task Reminder"
-
-    openers = [
-        f"Hello {name} 👋, what is your task game plan today?",
-        f"Hi {name} 🌤️, aaj ka focus mode on karte hain.",
-        f"Hey {name} 🙌, quick nudge for your task list.",
-    ]
-    nudges = [
-        "Small step now, big relief later. ✅",
-        "Abhi 10 minute do, baad me tension kam hogi. ⏳",
-        "Consistency > perfection. Bas start karo. 🚀",
-    ]
-
-    subject = f"{daily_tag}: {task} 📝"
-    body = (
-        f"{random.choice(openers)}\n\n"
-        f"Today task: {task} 🎯\n\n"
-        f"{random.choice(nudges)}\n"
-        f"{_typed_roast_line(importance, urgency)}"
-    )
+    if reminder_at and isinstance(reminder_at, datetime):
+        time_text = reminder_at.strftime("%Y-%m-%d %H:%M UTC")
+    else:
+        time_text = str(reminder_at) if reminder_at else "soon"
+    subject = f"Reminder: {task}"
+    body = f"Reminder: Complete your task '{task}' at {time_text}"
     return subject, body
 
 
-def build_sms_reminder_content(task_title, importance=None, urgency=None, is_daily=False):
+def build_sms_reminder_content(
+    task_title,
+    importance=None,
+    urgency=None,
+    is_daily=False,
+    reminder_at=None,
+):
     task = (task_title or "Your task").strip()
-    prefix = "Daily reminder" if is_daily else "Task reminder"
-    roast = _typed_roast_line(importance, urgency)
-    return f"{prefix}: {task} 📲. {roast}"
+    if reminder_at and isinstance(reminder_at, datetime):
+        time_text = reminder_at.strftime("%Y-%m-%d %H:%M UTC")
+    else:
+        time_text = str(reminder_at) if reminder_at else "soon"
+    return f"Reminder: Complete your task '{task}' at {time_text}"
 
 
 def build_empty_nudge_content(user_email=None, is_daily=True):
@@ -192,28 +89,28 @@ def build_empty_nudge_content(user_email=None, is_daily=True):
         is_weekend = False
 
     weekday_openers = [
-        f"Hello {name} 👋, aaj ka focus reset karte hain.",
-        f"Hi {name} 🌤️, quick check-in from TaskPrioritize.",
-        f"Hey {name} 🙌, small nudge to plan your day.",
+        f"Hello {name}, quick check-in.",
+        f"Hi {name}, small nudge to plan your day.",
+        f"Hey {name}, ready to add a task?",
     ]
     weekday_nudges = [
-        "Aaj koi task nahi मिला. Ek छोटा task add karoge?",
-        "List empty है — ek quick win डालो, flow banega.",
-        "No tasks today. Ek 10‑minute task se momentum shuru ho सकता है.",
+        "No tasks found today. Add one small task to build momentum.",
+        "Your list is empty. Start with a quick win.",
+        "Tiny tasks add up. Add one now.",
     ]
 
     weekend_openers = [
-        f"Hello {name} 👋, weekend vibe on?",
-        f"Hi {name} ☀️, weekend check-in from TaskPrioritize.",
-        f"Hey {name} 🙌, weekend plan set karte hain.",
+        f"Hello {name}, weekend check-in.",
+        f"Hi {name}, weekend plan set?",
+        f"Hey {name}, weekend vibe on?",
     ]
     weekend_nudges = [
-        "Weekend tasks empty हैं. Thoda planning kar lo — Monday smooth रहेगा.",
-        "No weekend tasks yet. Ek छोटा personal plan add karoge?",
-        "Weekend free? Enjoy, ya ek हल्का task डालो for balance.",
+        "Weekend tasks are empty. Add a light plan for balance.",
+        "No weekend tasks yet. A small plan helps Monday.",
+        "Enjoy your weekend, or add a tiny task to stay steady.",
     ]
 
-    subject = f"{daily_tag}: Weekend plan? 📅" if is_weekend else f"{daily_tag}: Are you really free? 📋"
+    subject = f"{daily_tag}: Weekend plan?" if is_weekend else f"{daily_tag}: Are you really free?"
     if is_weekend:
         body = f"{random.choice(weekend_openers)}\n\n{random.choice(weekend_nudges)}"
     else:
@@ -221,22 +118,25 @@ def build_empty_nudge_content(user_email=None, is_daily=True):
     return subject, body
 
 
-def build_welcome_content(user_email=None):
+def build_welcome_content(user_email=None, pending_count=0, upcoming=None):
     name = _display_name_from_email(user_email)
-    subject = "Welcome to Task Prioritization System 🚀"
+    subject = "Welcome back to Task Prioritization System"
+    upcoming_text = upcoming or "No upcoming reminders."
     body = (
-        f"Hi {name}, welcome back to Task Prioritization System!\n\n"
-        "You're ready to add new tasks and keep your day on track. "
-        "Start with one small task and build momentum.\n\n"
-        "If you need reminders, set a due time and we'll nudge you."
+        "<div style=\"font-family:Arial,sans-serif;line-height:1.5;\">"
+        f"<p>Hi {name},</p>"
+        f"<p>You have {pending_count} pending tasks.</p>"
+        f"<p>{upcoming_text}</p>"
+        "<p>Have a focused day!</p>"
+        "</div>"
     )
-    return subject, body
+    return subject, body, True
 
 
 def build_empty_nudge_sms(user_email=None, is_daily=True):
     name = _display_name_from_email(user_email)
     prefix = "Daily check-in" if is_daily else "Check-in"
-    return f"{prefix}: Hi {name}, no tasks found today. Are you really free? 📋"
+    return f"{prefix}: Hi {name}, no tasks found today. Are you really free?"
 
 
 def send_sms(to_phone, body):
@@ -270,15 +170,6 @@ def send_sms(to_phone, body):
             return False
 
     return _mock_sms(to_phone, body)
-
-
-def _mock_email(to_email, subject, body):
-    print("\n=== EMAIL REMINDER (MOCK) ===")
-    print("To:", to_email)
-    print("Subject:", subject)
-    print("Body:", body)
-    print("============================\n")
-    return True
 
 
 def _mock_sms(to_phone, body):

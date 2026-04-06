@@ -367,6 +367,7 @@ def dispatch_reminders():
                 importance=task.importance,
                 urgency=task.urgency,
                 is_daily=False,
+                reminder_at=task.reminder_at,
             )
             ok_email = send_email(to_email, subject, body, owner_email=task_user.email)
             print(f"[reminders] task={task.id} email_ok={ok_email}")
@@ -379,6 +380,7 @@ def dispatch_reminders():
                     importance=task.importance,
                     urgency=task.urgency,
                     is_daily=False,
+                    reminder_at=task.reminder_at,
                 ),
             )
             print(f"[reminders] task={task.id} sms_ok={ok_sms}")

@@ -21,7 +21,7 @@ import requests
 # Import database and User model
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import db
-from models import User
+from models import User, Task
 from Backend.activity_logger import log_activity
 from google_oauth import (
     build_auth_url,
@@ -197,8 +197,25 @@ def login():
         last_sent = user.last_welcome_sent_at
         should_send = not last_sent or last_sent.date() != now.date()
         if should_send:
-            subject, body = build_welcome_content(user.email)
-            if send_email(user.email, subject, body, owner_email=user.email):
+            pending_count = Task.query.filter_by(user_id=user.email, completed=False).count()
+            next_task = (
+                Task.query.filter_by(user_id=user.email, completed=False)
+                .filter(Task.reminder_at.isnot(None))
+                .filter(Task.reminder_at > now)
+                .order_by(Task.reminder_at.asc())
+                .first()
+            )
+            if next_task:
+                time_text = next_task.reminder_at.strftime("%Y-%m-%d %H:%M UTC")
+                upcoming = f"Upcoming reminder: {next_task.title} at {time_text}"
+            else:
+                upcoming = "No upcoming reminders."
+            subject, body, is_html = build_welcome_content(
+                user.email,
+                pending_count=pending_count,
+                upcoming=upcoming,
+            )
+            if send_email(user.email, subject, body, owner_email=user.email, is_html=is_html):
                 user.last_welcome_sent_at = now
                 db.session.commit()
     except Exception as exc:

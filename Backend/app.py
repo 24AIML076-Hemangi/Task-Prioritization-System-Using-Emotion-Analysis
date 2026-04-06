@@ -1,6 +1,9 @@
+from json import load
+
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 import os
+from dotenv import load_dotenv
+from flask_cors import CORS
 import sys
 from sqlalchemy import inspect, text
 from dotenv import load_dotenv
@@ -11,6 +14,10 @@ from flask_limiter.util import get_remote_address
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv
+import os 
+load_dotenv()
+
 # Add parent directory to path so we can import API module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -19,10 +26,25 @@ from database import db
 from models import User, Task, EmotionLog, UserActivityLog
 from modules.emotion import preload_deepface_model
 
+# Load .env from Backend directory before any os.getenv usage
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+env_path = os.path.join(BASE_DIR, ".env")
+load_dotenv(env_path)
+
+# Email config (SMTP)
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+
+print("[DEBUG] EMAIL_USER:", EMAIL_USER)
+print("[DEBUG] EMAIL_PASS:", "SET" if EMAIL_PASS else "NOT SET")
+if not EMAIL_USER or not EMAIL_PASS:
+    print("[ERROR] Email config invalid")
+else:
+    print("[SUCCESS] Email config loaded")
+
 # Resolve frontend directory and serve it from Flask so one server can host API + UI
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 frontend_dir = os.path.join(project_root, "Frontend")
-load_dotenv(os.path.join(project_root, ".env"))
 
 # Initialize Flask app
 app = Flask(__name__, static_folder=frontend_dir, static_url_path='')
@@ -74,10 +96,7 @@ except Exception as exc:
     print(f"[deepface] preload failed: {exc}")
 
 # Email configuration validation (startup)
-email_user = os.getenv("SMTP_USER") or os.getenv("SENDER_EMAIL") or os.getenv("POSTMARK_FROM")
-email_pass = os.getenv("SMTP_PASS") or os.getenv("SENDER_PASSWORD")
-postmark_key = os.getenv("POSTMARK_API_KEY")
-if not (postmark_key or (email_user and email_pass)):
+if not EMAIL_USER or not EMAIL_PASS:
     print("[warn] Email config invalid: reminders may not send")
 
 # Optional server-side sessions (e.g., Render + Redis)
@@ -237,6 +256,7 @@ def dispatch_all_due_reminders():
                             importance=task.importance,
                             urgency=task.urgency,
                             is_daily=True,
+                            reminder_at=task.reminder_at,
                         )
                         ok_email = send_email(task_user.email, subject, body, owner_email=task_user.email)
                         print(f"[reminders] task={task.id} email_ok={ok_email}")
@@ -248,6 +268,7 @@ def dispatch_all_due_reminders():
                                 importance=task.importance,
                                 urgency=task.urgency,
                                 is_daily=True,
+                                reminder_at=task.reminder_at,
                             ),
                         )
                         print(f"[reminders] task={task.id} sms_ok={ok_sms}")

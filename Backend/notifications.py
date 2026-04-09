@@ -13,6 +13,9 @@ PHONE_REGEX = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
 def send_email(to_email, subject, body, owner_email=None, is_html=False):
+    if os.getenv("DISABLE_EMAIL", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("[MOCK EMAIL] Disabled via DISABLE_EMAIL=1, skipping real send")
+        return False
     email_user = os.getenv("EMAIL_USER")
     email_pass = os.getenv("EMAIL_PASS")
     if not email_user or not email_pass:

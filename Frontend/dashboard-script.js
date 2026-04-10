@@ -400,7 +400,7 @@ class TaskManager {
                 return;
             }
             this.userProfile = data;
-            alert('Notification settings saved');
+            alert('Profile settings saved');
         } catch (error) {
             console.error('Profile save error:', error);
             alert('Unable to save notification settings');

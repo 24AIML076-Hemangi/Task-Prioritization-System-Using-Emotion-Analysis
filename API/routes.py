@@ -11,6 +11,7 @@ from flask_jwt_extended import (
     get_jwt_identity,
     jwt_required,
 )
+import logging
 import secrets
 import re
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import db
 from models import User, Task
 from Backend.activity_logger import log_activity
+from reminder_service import send_user_reminders, send_welcome_email
 from google_oauth import (
     build_auth_url,
     config_ready,
@@ -30,10 +32,11 @@ from google_oauth import (
     oauth_config,
     GOOGLE_TOKEN_URL,
 )
-from notifications import send_sms, send_email, build_welcome_content
+from notifications import send_sms, send_email
 
 # Blueprint
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+logger = logging.getLogger(__name__)
 
 # TEMP storage (college demo only)
 reset_tokens = {}
@@ -87,15 +90,6 @@ class ResetToken:
             return True, "Code verified successfully"
 
         return False, f"Invalid code. Attempts left: {self.max_attempts - self.attempts}"
-
-
-def mock_send_email(email, code):
-    """Mock email sender for college demo"""
-    print("\n========== PASSWORD RESET ==========")
-    print("To:", email)
-    print("Reset Code:", code)
-    print("===================================\n")
-    return True
 
 
 def _oauth_state_expired(state_created_at):
@@ -191,35 +185,15 @@ def login():
     refresh_token = create_refresh_token(identity=user.email)
 
     log_activity(user.email, "login", f"method={login_method}")
-    print(f"User logged in: {user.email}")
+    logger.info("User logged in: %s", user.email)
     try:
-        now = datetime.utcnow()
-        last_sent = user.last_welcome_sent_at
-        should_send = not last_sent or last_sent.date() != now.date()
-        if should_send:
-            pending_count = Task.query.filter_by(user_id=user.email, completed=False).count()
-            next_task = (
-                Task.query.filter_by(user_id=user.email, completed=False)
-                .filter(Task.reminder_at.isnot(None))
-                .filter(Task.reminder_at > now)
-                .order_by(Task.reminder_at.asc())
-                .first()
-            )
-            if next_task:
-                time_text = next_task.reminder_at.strftime("%Y-%m-%d %H:%M UTC")
-                upcoming = f"Upcoming reminder: {next_task.title} at {time_text}"
-            else:
-                upcoming = "No upcoming reminders."
-            subject, body, is_html = build_welcome_content(
-                user.email,
-                pending_count=pending_count,
-                upcoming=upcoming,
-            )
-            if send_email(user.email, subject, body, owner_email=user.email, is_html=is_html):
-                user.last_welcome_sent_at = now
-                db.session.commit()
+        send_welcome_email(user.email)
     except Exception as exc:
-        print(f"[welcome-email] Failed to send: {exc}")
+        logger.error("[welcome-email] Failed for user=%s: %s", user.email, exc)
+    try:
+        send_user_reminders(user)
+    except Exception as exc:
+        logger.error("[reminders] Failed during login for user=%s: %s", user.email, exc)
     return jsonify({
         "message": "Login successful",
         "user": user.to_dict(),
@@ -469,8 +443,16 @@ def forgot_password():
 
     reset_token = ResetToken(email)
     reset_tokens[email] = reset_token
-
-    mock_send_email(email, reset_token.code)
+    subject = "Password Reset Code"
+    body = (
+        f"Hello,\n\n"
+        f"Your password reset code is: {reset_token.code}\n\n"
+        "This code will expire in 1 hour.\n"
+    )
+    if not send_email(email, subject, body):
+        logger.error("[password-reset] Failed to send reset email to %s", email)
+        reset_tokens.pop(email, None)
+        return jsonify({"error": "Unable to send reset email"}), 500
 
     return jsonify({
         "message": "Reset code sent to email",

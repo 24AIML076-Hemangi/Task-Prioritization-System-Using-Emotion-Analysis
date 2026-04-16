@@ -14,7 +14,7 @@ from modules.emotion import (
     normalize_emotion_label,
     ALLOWED_EMOTIONS,
 )
-from notifications import send_email, send_sms, build_reminder_content, build_sms_reminder_content
+from reminder_service import send_user_reminders
 from activity_logger import log_activity
 
 
@@ -315,102 +315,13 @@ def emotion_scan():
 @task_bp.route('/reminders/dispatch', methods=['POST'])
 @jwt_required()
 def dispatch_reminders():
-    """Send due reminders for the authenticated user (email/SMS)"""
-    print("[reminders] Manual dispatch triggered")
+    """Send due reminder emails for the authenticated user."""
     user_id = get_current_user_id()
-    now = datetime.utcnow()
-    cooldown_minutes = int(os.getenv("REMINDER_COOLDOWN_MINUTES", "30"))
-    max_per_run = int(os.getenv("REMINDER_MAX_PER_USER_PER_RUN", "5"))
-    max_attempts = int(os.getenv("REMINDER_MAX_ATTEMPTS", "3"))
-
-    tasks = Task.query.filter_by(user_id=user_id).all()
-    due = [t for t in tasks if t.reminder_at and not t.reminder_sent and t.reminder_at <= now and not t.completed]
-
     user = User.query.filter_by(email=user_id).first()
-    sent = 0
-    failed = 0
-    processed = 0
-
-    for task in due:
-        processed += 1
-        task_user = User.query.filter_by(email=task.user_id).first() if task.user_id else None
-        if not task_user or not task_user.email:
-            print(f"[REMINDER] task_id={task.id} user_id={task.user_id} email=None method=skip current_jwt={user_id}")
-            task.reminder_attempts = (task.reminder_attempts or 0) + 1
-            failed += 1
-            continue
-        if user_id != task.user_id:
-            print("[WARNING] User mismatch in reminder dispatch")
-        print(f"[REMINDER] task_id={task.id} user_id={task.user_id} email={task_user.email} method={task.reminder_method or task_user.notification_preference or 'email'} current_jwt={user_id}")
-        if sent >= max_per_run:
-            break
-        if task.reminder_last_sent_at and now - task.reminder_last_sent_at < timedelta(minutes=cooldown_minutes):
-            continue
-        if task.reminder_attempts is not None and task.reminder_attempts >= max_attempts:
-            print(f"[reminders] Skip task={task.id} max attempts reached")
-            continue
-
-        account_preference = (task_user.notification_preference if task_user and task_user.notification_preference else 'email').lower()
-        method = (task.reminder_method or account_preference or 'email').lower()
-
-        ok_email = False
-        ok_sms = False
-        to_email = task_user.email
-        phone = task.reminder_phone or task_user.phone
-        email_attemptable = bool(to_email) if method in ['email', 'both'] else False
-        sms_attemptable = bool(phone and PHONE_REGEX.match(phone)) if method in ['sms', 'both'] else False
-
-        if method in ['email', 'both'] and email_attemptable:
-            subject, body = build_reminder_content(
-                task.title,
-                to_email,
-                importance=task.importance,
-                urgency=task.urgency,
-                is_daily=False,
-                reminder_at=task.reminder_at,
-            )
-            ok_email = send_email(to_email, subject, body, owner_email=task_user.email)
-            print(f"[reminders] task={task.id} email_ok={ok_email}")
-
-        if method in ['sms', 'both'] and sms_attemptable:
-            ok_sms = send_sms(
-                phone,
-                build_sms_reminder_content(
-                    task.title,
-                    importance=task.importance,
-                    urgency=task.urgency,
-                    is_daily=False,
-                    reminder_at=task.reminder_at,
-                ),
-            )
-            print(f"[reminders] task={task.id} sms_ok={ok_sms}")
-
-        delivery_satisfied = (
-            (method == 'email' and ok_email)
-            or (method == 'sms' and ok_sms)
-            or (method == 'both' and (ok_email or ok_sms))
-        )
-        terminal_misconfig = (
-            (method == 'email' and not email_attemptable)
-            or (method == 'sms' and not sms_attemptable)
-            or (method == 'both' and not email_attemptable and not sms_attemptable)
-        )
-        if delivery_satisfied:
-            task.reminder_sent = True
-            task.reminder_last_sent_at = now
-            sent += 1
-        else:
-            task.reminder_attempts = (task.reminder_attempts or 0) + 1
-            failed += 1
-            if terminal_misconfig:
-                print(f"[reminders] task={task.id} failed: misconfig")
-            else:
-                print(f"[reminders] task={task.id} failed: provider error")
-
-    if sent or failed:
-        db.session.commit()
-
-    return jsonify({'status': 'success', 'processed': processed, 'sent': sent, 'failed': failed}), 200
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    result = send_user_reminders(user)
+    return jsonify({'status': 'success', **result}), 200
 
 
 @task_bp.route('/reminders/debug', methods=['POST'])

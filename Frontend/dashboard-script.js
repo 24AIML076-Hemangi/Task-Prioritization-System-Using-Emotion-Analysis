@@ -53,7 +53,6 @@ class TaskManager {
         this.setupEventListeners();
         this.generateCalendar();
         this.renderTasks();
-        this.startReminderLoop();
         this.startAutoRefresh();
     }
 
@@ -1089,29 +1088,6 @@ class TaskManager {
     toLocalInputValue(date) {
         const pad = (n) => String(n).padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    }
-
-    startReminderLoop() {
-        const run = async () => {
-            try {
-                const res = await this.apiFetch(`${this.apiUrl}/reminders/dispatch`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}),
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.sent && data.sent > 0) {
-                        console.log(`Reminders sent: ${data.sent}`);
-                    }
-                }
-            } catch (err) {
-                console.log('Reminder dispatch failed');
-            }
-        };
-
-        run();
-        setInterval(run, 60000);
     }
 
     startAutoRefresh() {

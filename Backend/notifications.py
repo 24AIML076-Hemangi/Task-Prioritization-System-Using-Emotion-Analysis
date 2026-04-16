@@ -1,7 +1,7 @@
 """
 Notification helpers for email and SMS reminders.
-Falls back to console output if providers are not configured.
 """
+import logging
 import os
 import smtplib
 import random
@@ -11,16 +11,14 @@ from email.mime.text import MIMEText
 from datetime import datetime
 
 PHONE_REGEX = re.compile(r"^\+[1-9]\d{7,14}$")
+logger = logging.getLogger(__name__)
 
 
 def send_email(to_email, subject, body, owner_email=None, is_html=False):
-    if os.getenv("DISABLE_EMAIL", "").strip().lower() in {"1", "true", "yes", "on"}:
-        print("[MOCK EMAIL] Disabled via DISABLE_EMAIL=1, skipping real send")
-        return False
     email_user = os.getenv("EMAIL_USER")
     email_pass = os.getenv("EMAIL_PASS")
     if not email_user or not email_pass:
-        print("[MOCK EMAIL] Config missing, skipping real send")
+        logger.error("[EMAIL ERROR] SMTP configuration missing")
         return False
 
     try:
@@ -35,10 +33,10 @@ def send_email(to_email, subject, body, owner_email=None, is_html=False):
         server.sendmail(email_user, to_email, msg.as_string())
         server.quit()
 
-        print(f"[EMAIL] Sent to {to_email}")
+        logger.info("[email] sent to %s", to_email)
         return True
     except Exception as exc:
-        print(f"[EMAIL ERROR] {exc}")
+        logger.error("[EMAIL ERROR] %s", exc)
         return False
 
 

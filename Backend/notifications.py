@@ -58,12 +58,22 @@ def build_reminder_content(
     reminder_at=None,
 ):
     task = (task_title or "Your task").strip()
+    name = _display_name_from_email(user_email)
     if reminder_at and isinstance(reminder_at, datetime):
         time_text = reminder_at.strftime("%Y-%m-%d %H:%M UTC")
     else:
         time_text = str(reminder_at) if reminder_at else "soon"
-    subject = f"Reminder: {task}"
-    body = f"Reminder: Complete your task '{task}' at {time_text}"
+    importance_text = (importance or "not-important").replace("-", " ").title()
+    urgency_text = (urgency or "not-urgent").replace("-", " ").title()
+    subject = f"Reminder | {task} | {time_text}"
+    body = (
+        f"Hi {name},\n\n"
+        f"Reminder for your task: {task} \U0001F4CC\n"
+        f"Scheduled time: {time_text} \u23F0\n"
+        f"Importance: {importance_text} \u2B50\n"
+        f"Urgency: {urgency_text} \U0001F525\n\n"
+        "A small step now can keep the rest of the day lighter. \U0001F4AA"
+    )
     return subject, body
 
 
@@ -79,7 +89,15 @@ def build_sms_reminder_content(
         time_text = reminder_at.strftime("%Y-%m-%d %H:%M UTC")
     else:
         time_text = str(reminder_at) if reminder_at else "soon"
-    return f"Reminder: Complete your task '{task}' at {time_text}"
+    importance_text = (importance or "not-important").replace("-", " ").title()
+    urgency_text = (urgency or "not-urgent").replace("-", " ").title()
+    return (
+        f"\U0001F514 Task reminder: {task}. "
+        f"Time: {time_text}. "
+        f"Importance: {importance_text}. "
+        f"Urgency: {urgency_text}. "
+        "\U0001F4AA"
+    )
 
 
 def build_empty_nudge_content(user_email=None, is_daily=True):
@@ -113,24 +131,34 @@ def build_empty_nudge_content(user_email=None, is_daily=True):
         "Enjoy your weekend, or add a tiny task to stay steady.",
     ]
 
-    subject = f"{daily_tag}: Weekend plan?" if is_weekend else f"{daily_tag}: Are you really free?"
+    subject = (
+        f"{daily_tag} \U0001F31F Weekend plan?"
+        if is_weekend
+        else f"{daily_tag} \U0001F4DD Time to set one small goal"
+    )
     if is_weekend:
-        body = f"{random.choice(weekend_openers)}\n\n{random.choice(weekend_nudges)}"
+        body = (
+            f"{random.choice(weekend_openers)} \U0001F31E\n\n"
+            f"{random.choice(weekend_nudges)} \U0001F4AA"
+        )
     else:
-        body = f"{random.choice(weekday_openers)}\n\n{random.choice(weekday_nudges)}"
+        body = (
+            f"{random.choice(weekday_openers)} \U0001F44B\n\n"
+            f"{random.choice(weekday_nudges)} \u2705"
+        )
     return subject, body
 
 
 def build_welcome_content(user_email=None, pending_count=0, upcoming=None):
     name = _display_name_from_email(user_email)
-    subject = "Welcome back to Task Prioritization System"
+    subject = "Welcome back to Task Prioritization System | Let's focus"
     upcoming_text = upcoming or "No upcoming reminders."
     body = (
         "<div style=\"font-family:Arial,sans-serif;line-height:1.5;\">"
-        f"<p>Hi {name},</p>"
-        f"<p>You have {pending_count} pending tasks.</p>"
-        f"<p>{upcoming_text}</p>"
-        "<p>Have a focused day!</p>"
+        f"<p>Hi {name}, &#128075;</p>"
+        f"<p>You have <strong>{pending_count}</strong> pending tasks &#128221;</p>"
+        f"<p>{upcoming_text} &#9200;</p>"
+        "<p>You've got this. One clear task at a time &#128170;</p>"
         "</div>"
     )
     return subject, body, True
@@ -139,7 +167,10 @@ def build_welcome_content(user_email=None, pending_count=0, upcoming=None):
 def build_empty_nudge_sms(user_email=None, is_daily=True):
     name = _display_name_from_email(user_email)
     prefix = "Daily check-in" if is_daily else "Check-in"
-    return f"{prefix}: Hi {name}, no tasks found today. Are you really free?"
+    return (
+        f"{prefix} \U0001F4DD: Hi {name}, no tasks found today. "
+        "Add one small task and build momentum \U0001F4AA"
+    )
 
 
 def send_sms(to_phone, body):

@@ -1,6 +1,6 @@
 from json import load
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -102,24 +102,29 @@ if not EMAIL_USER or not EMAIL_PASS:
 # Optional server-side sessions (e.g., Render + Redis)
 try:
     from flask_session import Session  # type: ignore
-    redis_url = os.getenv("REDIS_URL")
-    if redis_url:
-        app.config["SESSION_TYPE"] = "redis"
-        try:
-            from redis import Redis  # type: ignore
-            app.config["SESSION_REDIS"] = Redis.from_url(redis_url)
-        except Exception as redis_exc:
-            print(f"[session] Redis unavailable, falling back to filesystem: {redis_exc}")
+except ImportError:
+    print("[session] Flask-Session not installed; using Flask signed-cookie sessions.")
+else:
+    try:
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            app.config["SESSION_TYPE"] = "redis"
+            try:
+                from redis import Redis  # type: ignore
+                app.config["SESSION_REDIS"] = Redis.from_url(redis_url)
+            except Exception as redis_exc:
+                print(f"[session] Redis unavailable, falling back to filesystem: {redis_exc}")
+                app.config["SESSION_TYPE"] = "filesystem"
+                app.config["SESSION_FILE_DIR"] = os.path.join(project_root, ".flask_sessions")
+        else:
             app.config["SESSION_TYPE"] = "filesystem"
             app.config["SESSION_FILE_DIR"] = os.path.join(project_root, ".flask_sessions")
-    else:
-        app.config["SESSION_TYPE"] = "filesystem"
-        app.config["SESSION_FILE_DIR"] = os.path.join(project_root, ".flask_sessions")
-    if app.config.get("SESSION_TYPE") == "filesystem":
-        os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
-    Session(app)
-except Exception as exc:
-    print(f"[session] Flask-Session not enabled: {exc}")
+        if app.config.get("SESSION_TYPE") == "filesystem":
+            os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
+        Session(app)
+        print(f"[session] Flask-Session enabled via {app.config.get('SESSION_TYPE', 'unknown')}.")
+    except Exception as exc:
+        print(f"[session] Flask-Session setup failed; using Flask signed-cookie sessions: {exc}")
 
 # Enable CORS for frontend communication
 default_origins = ["http://localhost:5000", "http://localhost:3000"]
@@ -171,6 +176,11 @@ def generic_error_handler(e):
 @app.route('/')
 def home():
     return app.send_static_file("index.html")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(frontend_dir, "logo.png", mimetype="image/png")
 
 
 @app.route("/debug/users", methods=["GET"])

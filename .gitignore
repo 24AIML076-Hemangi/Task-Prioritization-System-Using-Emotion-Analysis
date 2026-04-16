@@ -23,6 +23,7 @@ logs.txt
 .DS_Store
 .vscode/
 .idea/
+.kiro/
 
 # Database & data files
 *.db

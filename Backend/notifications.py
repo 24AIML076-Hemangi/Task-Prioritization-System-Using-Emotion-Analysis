@@ -6,6 +6,7 @@ import os
 import smtplib
 import random
 import re
+from html import escape
 from email.mime.text import MIMEText
 from datetime import datetime
 
@@ -153,12 +154,33 @@ def build_welcome_content(user_email=None, pending_count=0, upcoming=None):
     name = _display_name_from_email(user_email)
     subject = "Welcome back to Task Prioritization System | Let's focus"
     upcoming_text = upcoming or "No upcoming reminders."
+    safe_name = escape(name)
+    safe_upcoming = escape(upcoming_text)
+    task_label = "task" if pending_count == 1 else "tasks"
     body = (
-        "<div style=\"font-family:Arial,sans-serif;line-height:1.5;\">"
-        f"<p>Hi {name}, &#128075;</p>"
-        f"<p>You have <strong>{pending_count}</strong> pending tasks &#128221;</p>"
-        f"<p>{upcoming_text} &#9200;</p>"
-        "<p>You've got this. One clear task at a time &#128170;</p>"
+        "<div style=\"font-family:Arial,sans-serif;line-height:1.6;background:#f4efe6;padding:24px;\">"
+        "<div style=\"max-width:560px;margin:0 auto;background:#ffffff;border-radius:18px;padding:28px;"
+        "border:1px solid #eadfce;box-shadow:0 10px 30px rgba(76, 55, 33, 0.08);\">"
+        "<div style=\"font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#9a6b2f;"
+        "font-weight:700;margin-bottom:12px;\">Daily Focus Check-In</div>"
+        f"<p style=\"margin:0 0 12px;font-size:18px;color:#2f2419;\"><strong>Hi {safe_name}</strong> &#128075;</p>"
+        "<div style=\"background:#fff6e8;border:1px solid #f0d7ab;border-radius:14px;padding:16px 18px;"
+        "margin:0 0 16px;\">"
+        "<div style=\"font-size:13px;color:#9a6b2f;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;\">"
+        "Pending Tasks</div>"
+        f"<div style=\"font-size:32px;font-weight:800;color:#2f2419;margin-top:6px;\">{pending_count}</div>"
+        f"<div style=\"font-size:15px;color:#5f4630;\">You currently have {pending_count} pending {task_label} &#128221;</div>"
+        "</div>"
+        "<div style=\"background:#f8fafc;border:1px solid #d9e2ec;border-radius:14px;padding:16px 18px;"
+        "margin:0 0 18px;\">"
+        "<div style=\"font-size:13px;color:#486581;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;\">"
+        "Next Reminder</div>"
+        f"<div style=\"font-size:15px;color:#243b53;margin-top:8px;\">{safe_upcoming} &#9200;</div>"
+        "</div>"
+        "<p style=\"margin:0;font-size:15px;color:#3e2f22;\">"
+        "You've got this. One clear task at a time &#128170;"
+        "</p>"
+        "</div>"
         "</div>"
     )
     return subject, body, True

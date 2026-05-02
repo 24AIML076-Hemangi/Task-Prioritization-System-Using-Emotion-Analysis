@@ -571,14 +571,19 @@ class TaskManager {
     }
 
     getRecommendedTaskIds(activeTasks) {
+        return this.getRecommendedTasks(activeTasks).map((task) => task.id);
+    }
+
+    getRecommendedTasks(activeTasks) {
         if (!this.currentEmotion) return [];
-        const ranked = (activeTasks || [])
+        return (activeTasks || [])
             .map((task) => ({
                 task,
                 score: this.scoreTaskForEmotion(task, this.currentEmotion),
             }))
-            .sort((a, b) => b.score - a.score);
-        return ranked.slice(0, 3).map((entry) => entry.task.id);
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3)
+            .map((entry) => entry.task);
     }
 
     scoreTaskForEmotion(task, emotion) {
@@ -613,7 +618,7 @@ class TaskManager {
             return;
         }
 
-        const topThree = activeTasks.slice(0, 3);
+        const topThree = this.getRecommendedTasks(activeTasks);
         section.style.display = topThree.length ? 'block' : 'none';
         if (status) status.textContent = '';
         if (hint) {
@@ -626,7 +631,7 @@ class TaskManager {
             }
         }
         list.innerHTML = topThree
-            .map((task, idx) => `<li>${idx + 1}. ${this.escape(task.title || '')}</li>`)
+            .map((task) => `<li>${this.escape(task.title || '')}</li>`)
             .join('');
     }
 
@@ -1316,15 +1321,11 @@ class TaskManager {
 
         const base64 = cropCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
 
-        let timeoutId = null;
         try {
-            const controller = new AbortController();
-            timeoutId = setTimeout(() => controller.abort(), 6000);
-            // Try real API
+            // DeepFace can take a while on CPU, so do not abort a valid scan early.
             const res = await this.apiFetch(`${this.apiUrl}/emotion-scan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                signal: controller.signal,
                 body: JSON.stringify({ image: base64 }),
             });
             if (res.ok) {
@@ -1333,9 +1334,7 @@ class TaskManager {
                 return;
             }
         } catch (err) {
-            console.log('API unavailable, using mock');
-        } finally {
-            if (timeoutId) clearTimeout(timeoutId);
+            console.log('Emotion scan unavailable, using neutral fallback');
         }
 
         // Fallback to mock
@@ -1424,7 +1423,22 @@ class TaskManager {
         document.getElementById('modalOverlay').classList.add('show');
     }
 
-    applyEmotionToTasks() {
+    async saveEmotionAppliedToRecommendedTasks(activeTasks) {
+        const recommended = this.getRecommendedTasks(activeTasks);
+        await Promise.all(recommended.map(async (task) => {
+            const response = await this.apiFetch(`${this.apiUrl}/${task.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ emotion_applied: this.currentEmotion }),
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                Object.assign(task, updated);
+            }
+        }));
+    }
+
+    async applyEmotionToTasks() {
         if (!this.pendingEmotionResult) return;
 
         this.currentEmotion = this.pendingEmotionResult.emotion;
@@ -1437,7 +1451,9 @@ class TaskManager {
         document.getElementById('emotionLabel').textContent = displayLabel;
         badge.style.display = 'flex';
 
-        this.renderTasks();
+        const activeTasks = this.tasks.filter((task) => !task.completed);
+        await this.saveEmotionAppliedToRecommendedTasks(activeTasks);
+        await this.renderTasks();
         this.closeResult();
     }
 

@@ -65,15 +65,55 @@ def build_reminder_content(
     importance_text = (importance or "not-important").replace("-", " ").title()
     urgency_text = (urgency or "not-urgent").replace("-", " ").title()
     subject = f"Reminder | {task} | {time_text}"
+    safe_name = escape(name)
+    safe_task = escape(task)
+    safe_time = escape(time_text)
+    safe_importance = escape(importance_text)
+    safe_urgency = escape(urgency_text)
     body = (
-        f"Hi {name},\n\n"
-        f"Reminder for your task: {task} \U0001F4CC\n"
-        f"Scheduled time: {time_text} \u23F0\n"
-        f"Importance: {importance_text} \u2B50\n"
-        f"Urgency: {urgency_text} \U0001F525\n\n"
-        "A small step now can keep the rest of the day lighter. \U0001F4AA"
+        "<div style=\"font-family:Arial,sans-serif;line-height:1.6;background:#f4efe6;padding:24px;\">"
+        "<div style=\"max-width:560px;margin:0 auto;background:#ffffff;border-radius:18px;padding:28px;"
+        "border:1px solid #eadfce;box-shadow:0 10px 30px rgba(76, 55, 33, 0.08);\">"
+        "<div style=\"font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#9a6b2f;"
+        "font-weight:700;margin-bottom:12px;\">Task Reminder</div>"
+        f"<p style=\"margin:0 0 12px;font-size:18px;color:#2f2419;\"><strong>Hi {safe_name}</strong> &#128075;</p>"
+        "<div style=\"background:#fff6e8;border:1px solid #f0d7ab;border-radius:14px;padding:18px;"
+        "margin:0 0 16px;\">"
+        "<div style=\"font-size:13px;color:#9a6b2f;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;\">"
+        "Your Task</div>"
+        f"<div style=\"font-size:24px;font-weight:800;color:#2f2419;margin-top:6px;\">{safe_task} &#128204;</div>"
+        "</div>"
+        "<div style=\"background:#f8fafc;border:1px solid #d9e2ec;border-radius:14px;padding:16px 18px;"
+        "margin:0 0 16px;\">"
+        "<div style=\"font-size:13px;color:#486581;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;\">"
+        "Scheduled Time</div>"
+        f"<div style=\"font-size:16px;color:#243b53;margin-top:8px;font-weight:700;\">{safe_time} &#9200;</div>"
+        "</div>"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin:0 0 18px;\">"
+        "<tr>"
+        "<td style=\"width:50%;padding-right:6px;\">"
+        "<div style=\"background:#fef2f2;border:1px solid #fecaca;border-radius:14px;padding:14px;\">"
+        "<div style=\"font-size:12px;color:#991b1b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;\">"
+        "Urgency</div>"
+        f"<div style=\"font-size:15px;color:#7f1d1d;margin-top:6px;font-weight:700;\">{safe_urgency} &#128293;</div>"
+        "</div>"
+        "</td>"
+        "<td style=\"width:50%;padding-left:6px;\">"
+        "<div style=\"background:#fefce8;border:1px solid #fde68a;border-radius:14px;padding:14px;\">"
+        "<div style=\"font-size:12px;color:#854d0e;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;\">"
+        "Importance</div>"
+        f"<div style=\"font-size:15px;color:#713f12;margin-top:6px;font-weight:700;\">{safe_importance} &#11088;</div>"
+        "</div>"
+        "</td>"
+        "</tr>"
+        "</table>"
+        "<p style=\"margin:0;font-size:15px;color:#3e2f22;\">"
+        "A small step now can keep the rest of the day lighter. &#128170;"
+        "</p>"
+        "</div>"
+        "</div>"
     )
-    return subject, body
+    return subject, body, True
 
 
 def build_sms_reminder_content(

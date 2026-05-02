@@ -76,7 +76,7 @@ def send_user_reminders(user):
             logger.info("[reminders] skipped task=%s for user=%s: missing email", task.id, user.email)
             continue
 
-        subject, body = build_reminder_content(
+        subject, body, is_html = build_reminder_content(
             task.title,
             user.email,
             importance=task.importance,
@@ -85,7 +85,7 @@ def send_user_reminders(user):
             reminder_at=task.reminder_at,
         )
         try:
-            sent = send_email(user.email, subject, body, owner_email=user.email)
+            sent = send_email(user.email, subject, body, owner_email=user.email, is_html=is_html)
         except Exception as exc:
             logger.error("[reminders] error sending task=%s for user=%s: %s", task.id, user.email, exc)
             skipped += 1

@@ -2,7 +2,7 @@
 Task management routes for the API
 """
 from flask import Blueprint, request, jsonify
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import re
 import os
 import logging
@@ -47,6 +47,8 @@ def parse_datetime(value):
         return None
     try:
         dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
         return dt.replace(tzinfo=None)
     except Exception:
         return None
@@ -131,8 +133,8 @@ def create_task():
         reminder_method=data.get('reminder_method'),
         reminder_phone=reminder_phone
     )
-    if not new_task.reminder_at and due_time:
-        new_task.reminder_at = merge_date_time(due_at, due_time)
+    if not new_task.reminder_at:
+        new_task.reminder_at = merge_date_time(due_at, due_time) if due_time else due_at
     if new_task.reminder_method and not new_task.reminder_at:
         return jsonify({'error': 'reminder_at is required when reminder_method is set'}), 400
     if new_task.reminder_at:
@@ -193,8 +195,8 @@ def update_task(task_id):
             return jsonify({'error': 'Invalid reminder_phone. Enter local digits with country code, or full E.164'}), 400
         task.reminder_phone = reminder_phone
 
-    if not task.reminder_at and task.due_time:
-        task.reminder_at = merge_date_time(task.due_at, task.due_time)
+    if not task.reminder_at and (task.due_time or task.due_at):
+        task.reminder_at = merge_date_time(task.due_at, task.due_time) if task.due_time else task.due_at
         task.reminder_sent = False if task.reminder_at else task.reminder_sent
 
     db.session.commit()

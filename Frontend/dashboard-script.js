@@ -162,12 +162,16 @@ class TaskManager {
 
     async createTask(title, dueAtLocal = null, dueTimeLocal = null) {
         try {
+            const dueAtUtc = this.localInputToUtcIso(dueAtLocal);
+            const reminderMethod = dueAtUtc ? (this.userProfile?.notification_preference || 'email') : null;
             const payload = {
                 title: title.trim(),
                 importance: 'not-important',
                 urgency: 'not-urgent',
-                due_at: dueAtLocal,
+                due_at: dueAtUtc,
                 due_time: dueTimeLocal,
+                reminder_at: dueAtUtc,
+                reminder_method: reminderMethod,
             };
             
             console.log('📝 Creating task:', payload);
@@ -709,7 +713,7 @@ class TaskManager {
     getTaskReferenceDate(task) {
         const dateValue = task.due_at || task.created_at || task.createdAt;
         if (!dateValue) return null;
-        const d = new Date(dateValue);
+        const d = this.parseServerDate(dateValue);
         return Number.isNaN(d.getTime()) ? null : d;
     }
 
@@ -722,7 +726,7 @@ class TaskManager {
 
     formatDueMeta(task) {
         if (!task.due_at) return null;
-        const due = new Date(task.due_at);
+        const due = this.parseServerDate(task.due_at);
         if (Number.isNaN(due.getTime())) return null;
 
         const formatted = due.toLocaleString([], {
@@ -956,8 +960,8 @@ class TaskManager {
         const content = document.getElementById('taskDetailsContent');
         if (!panel || !content) return;
 
-        const due = task.due_at ? new Date(task.due_at) : null;
-        const reminder = task.reminder_at ? new Date(task.reminder_at) : null;
+        const due = task.due_at ? this.parseServerDate(task.due_at) : null;
+        const reminder = task.reminder_at ? this.parseServerDate(task.reminder_at) : null;
         const dueValue = due ? this.toLocalInputValue(due) : '';
         const reminderValue = reminder ? this.toLocalInputValue(reminder) : '';
         const defaultMethod = task.reminder_method || (this.userProfile?.notification_preference || '');
@@ -1022,8 +1026,8 @@ class TaskManager {
         const clearBtn = document.getElementById('detailClear');
 
         const updateData = {
-            due_at: dueRaw || null,
-            reminder_at: reminderRaw || null,
+            due_at: this.localInputToUtcIso(dueRaw),
+            reminder_at: this.localInputToUtcIso(reminderRaw),
             reminder_method: method || null,
             // Use the single profile phone source for SMS reminders.
             reminder_phone: null,
@@ -1085,15 +1089,40 @@ class TaskManager {
         }
     }
 
+    async dispatchDueReminders() {
+        try {
+            await this.apiFetch(`${this.apiUrl}/reminders/dispatch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+        } catch (error) {
+            console.log('Reminder dispatch failed');
+        }
+    }
+
     toLocalInputValue(date) {
         const pad = (n) => String(n).padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    localInputToUtcIso(value) {
+        if (!value) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    }
+
+    parseServerDate(value) {
+        if (!value) return null;
+        const raw = String(value);
+        const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+        return new Date(hasTimezone ? raw : `${raw}Z`);
     }
 
     startAutoRefresh() {
         const run = async () => {
             try {
                 const before = JSON.stringify(this.tasks);
+                await this.dispatchDueReminders();
                 await this.loadTasks();
                 const after = JSON.stringify(this.tasks);
 
@@ -1116,6 +1145,7 @@ class TaskManager {
             }
         };
 
+        this.dispatchDueReminders();
         setInterval(run, 120000);
     }
 
@@ -1135,7 +1165,7 @@ class TaskManager {
             this.tasks
                 .filter(t => t.due_at)
                 .map(t => {
-                    const d = new Date(t.due_at);
+                    const d = this.parseServerDate(t.due_at);
                     if (Number.isNaN(d.getTime())) return null;
                     return this.getLocalDateKey(d);
                 })
